@@ -79,14 +79,15 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      external: (id) => {
+      external: (id, importer) => {
         // Externalize files outside the web app directory from SSR bundle
-        if (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\')) {
+        // Check if the import is from outside the web app src directory
+        if (importer && (importer.includes('/apps/lib/') || importer.includes('\\apps\\lib\\'))) {
           return true;
         }
-        // Externalize node_modules
-        if (id.startsWith('node:') || (!id.startsWith('.') && !id.startsWith('/') && !id.includes('src'))) {
-          return false; // Let Vite handle node_modules normally
+        // Externalize imports that reference files outside src
+        if (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\')) {
+          return true;
         }
         return false;
       },
