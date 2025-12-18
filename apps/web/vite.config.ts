@@ -43,7 +43,7 @@ export default defineConfig({
       include: ['src/**/*.{js,jsx,ts,tsx}'], // or RegExp: /src\/.*\.[tj]sx?$/
       exclude: /node_modules/, // skip everything else
       babelConfig: {
-        babelrc: false, // don’t merge other Babel files
+        babelrc: false, // don't merge other Babel files
         configFile: false,
         plugins: ['styled-jsx/babel'],
       },
@@ -65,6 +65,21 @@ export default defineConfig({
     tsconfigPaths(),
     aliases(),
     layoutWrapperPlugin(),
+    // Plugin to handle imports from outside web app during SSR build
+    {
+      name: 'externalize-outside-web-app',
+      resolveId(id, importer) {
+        // If importing from a file outside web app, externalize it
+        if (importer && (importer.includes('/apps/lib/') || importer.includes('\\apps\\lib\\'))) {
+          return { id, external: true };
+        }
+        // If the resolved ID points to a file outside web app, externalize it
+        if (id && (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\'))) {
+          return { id, external: true };
+        }
+        return null;
+      },
+    },
   ],
   resolve: {
     alias: {
@@ -86,7 +101,11 @@ export default defineConfig({
           return true;
         }
         // Externalize imports that reference files outside src
-        if (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\')) {
+        if (id && (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\'))) {
+          return true;
+        }
+        // Also check for resolved paths that might point to old locations
+        if (id && id.includes('apps/lib/resilience/circuitBreaker')) {
           return true;
         }
         return false;
