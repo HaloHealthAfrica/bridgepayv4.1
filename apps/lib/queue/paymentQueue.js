@@ -34,10 +34,11 @@ export const paymentWorker = new Worker(
     console.log(`[Payment Queue] Processing job ${job.id} for intent ${intentId}`);
 
     // Import here to avoid circular dependencies
-    const lemonade = await import('@/app/api/utils/lemonadeClient');
-    const sql = await import('@/app/api/utils/sql');
-    const { lemonadeBreaker } = await import('@/lib/resilience/circuitBreaker');
-    const { retryWithBackoff } = await import('@/lib/resilience/retry');
+    // Use relative paths since this file is outside the web app directory
+    const lemonade = await import('../../web/src/app/api/utils/lemonadeClient.js');
+    const sql = await import('../../web/src/app/api/utils/sql.js');
+    const { lemonadeBreaker } = await import('../../web/src/lib/resilience/circuitBreaker.js');
+    const { retryWithBackoff } = await import('../../web/src/lib/resilience/retry.js');
 
     try {
       // Process payment with retry and circuit breaker
