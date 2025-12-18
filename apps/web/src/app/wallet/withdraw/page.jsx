@@ -15,10 +15,10 @@ export default function WalletWithdrawPage() {
   const { walletData } = useWallet();
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState(walletData?.currency || 'KES');
-  const [method, setMethod] = useState<'mpesa' | 'bank'>('mpesa');
+  const [method, setMethod] = useState('mpesa');
   const [phone, setPhone] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<any>(null);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
   // Update currency when wallet data loads
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function WalletWithdrawPage() {
   }, [walletData?.currency]);
 
   const mutation = useMutation({
-    mutationFn: async (payload: any) => {
+    mutationFn: async (payload) => {
       const res = await fetch('/api/wallet/withdraw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,7 +49,7 @@ export default function WalletWithdrawPage() {
       qc.invalidateQueries({ queryKey: ['wallet-balance'] });
       toast.success('Withdrawal requested successfully');
     },
-    onError: (e: any) => {
+    onError: (e) => {
       console.error(e);
       setError(e?.message || 'Could not start withdrawal');
       toast.error(e?.message || 'Could not start withdrawal');
@@ -62,7 +62,7 @@ export default function WalletWithdrawPage() {
     return true;
   }, [amount, method, phone]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     setSuccess(null);
     setError(null);
