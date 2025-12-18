@@ -241,7 +241,7 @@ export async function POST(request, { params }) {
     try {
       const metadata = intent.metadata || {};
       if (metadata.project_id) {
-        const { updateProjectOnPayment } = await import("@/../../../../lib/projects/updateProjectOnPayment.js");
+        const { updateProjectOnPayment } = await import("../../../../lib/projects/updateProjectOnPayment.js");
         // Payment is confirmed, so status is 'completed'
         await updateProjectOnPayment(id, "completed");
       }

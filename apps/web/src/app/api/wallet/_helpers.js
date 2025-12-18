@@ -71,7 +71,7 @@ export async function postLedgerAndUpdateBalance({
   
   // Invalidate cache after balance update
   try {
-    const { invalidateWalletCache, setCachedBalance } = await import("@/../../../../lib/cache/walletCache");
+    const { invalidateWalletCache, setCachedBalance } = await import("../../../../lib/cache/walletCache");
     const userId = row.user_id || res?.[0]?.[0]?.user_id;
     const newBalance = res?.[0]?.[0]?.balance_after;
     
