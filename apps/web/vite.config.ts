@@ -66,15 +66,25 @@ export default defineConfig({
     aliases(),
     layoutWrapperPlugin(),
     // Plugin to handle imports from outside web app during SSR build
+    // Must run early to catch all imports
     {
       name: 'externalize-outside-web-app',
+      enforce: 'pre', // Run before other resolve plugins
       resolveId(id, importer) {
+        // Normalize paths for comparison
+        const normalizedId = id?.replace(/\\/g, '/');
+        const normalizedImporter = importer?.replace(/\\/g, '/');
+        
         // If importing from a file outside web app, externalize it
-        if (importer && (importer.includes('/apps/lib/') || importer.includes('\\apps\\lib\\'))) {
+        if (normalizedImporter && normalizedImporter.includes('/apps/lib/')) {
           return { id, external: true };
         }
         // If the resolved ID points to a file outside web app, externalize it
-        if (id && (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\'))) {
+        if (normalizedId && normalizedId.includes('/apps/lib/')) {
+          return { id, external: true };
+        }
+        // Catch old circuitBreaker path specifically
+        if (normalizedId && normalizedId.includes('apps/lib/resilience/circuitBreaker')) {
           return { id, external: true };
         }
         return null;
@@ -95,17 +105,21 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: (id, importer) => {
+        // Normalize paths for comparison
+        const normalizedId = id?.replace(/\\/g, '/');
+        const normalizedImporter = importer?.replace(/\\/g, '/');
+        
         // Externalize files outside the web app directory from SSR bundle
         // Check if the import is from outside the web app src directory
-        if (importer && (importer.includes('/apps/lib/') || importer.includes('\\apps\\lib\\'))) {
+        if (normalizedImporter && normalizedImporter.includes('/apps/lib/')) {
           return true;
         }
         // Externalize imports that reference files outside src
-        if (id && (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\'))) {
+        if (normalizedId && normalizedId.includes('/apps/lib/')) {
           return true;
         }
         // Also check for resolved paths that might point to old locations
-        if (id && id.includes('apps/lib/resilience/circuitBreaker')) {
+        if (normalizedId && normalizedId.includes('apps/lib/resilience/circuitBreaker')) {
           return true;
         }
         return false;
