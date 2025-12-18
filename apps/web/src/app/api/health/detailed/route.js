@@ -102,7 +102,7 @@ export const GET = withErrorHandling(async (request) => {
 
   // Check circuit breakers
   try {
-    const { getCircuitBreakerStatus } = await import("@/../../../../lib/resilience/circuitBreaker.js");
+    const { getCircuitBreakerStatus } = await import("@/lib/resilience/circuitBreaker.js");
     const breakerStatus = getCircuitBreakerStatus();
     
     const allHealthy = Object.values(breakerStatus).every(
