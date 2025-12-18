@@ -77,6 +77,21 @@ export default defineConfig({
     },
     dedupe: ['react', 'react-dom'],
   },
+  build: {
+    rollupOptions: {
+      external: (id) => {
+        // Externalize files outside the web app directory from SSR bundle
+        if (id.includes('/apps/lib/') || id.includes('\\apps\\lib\\')) {
+          return true;
+        }
+        // Externalize node_modules
+        if (id.startsWith('node:') || (!id.startsWith('.') && !id.startsWith('/') && !id.includes('src'))) {
+          return false; // Let Vite handle node_modules normally
+        }
+        return false;
+      },
+    },
+  },
   clearScreen: false,
   server: {
     allowedHosts: true,
