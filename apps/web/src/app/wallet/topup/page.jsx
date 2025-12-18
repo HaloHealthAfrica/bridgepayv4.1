@@ -11,13 +11,13 @@ export default function WalletTopUpPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState<'mpesa_stk' | 'card'>('mpesa_stk');
+  const [method, setMethod] = useState('mpesa_stk');
   const [phone, setPhone] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<any>(null);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
   const mutation = useMutation({
-    mutationFn: async (payload: any) => {
+    mutationFn: async (payload) => {
       const res = await fetch('/api/wallet/topup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -38,7 +38,7 @@ export default function WalletTopUpPage() {
       qc.invalidateQueries({ queryKey: ['wallet-balance'] });
       toast.success('Top-up request started. Check your phone to approve.');
     },
-    onError: (e: any) => {
+    onError: (e) => {
       console.error(e);
       setError(e?.message || 'Could not start top-up');
       toast.error(e?.message || 'Could not start top-up');
@@ -51,7 +51,7 @@ export default function WalletTopUpPage() {
     return true;
   }, [amount, method, phone]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     setSuccess(null);
     setError(null);

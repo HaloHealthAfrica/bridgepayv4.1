@@ -86,7 +86,7 @@ export default function WalletPage() {
   });
 
   const seedMutation = useMutation({
-    mutationFn: async (balances: any) => {
+    mutationFn: async (balances) => {
       const res = await fetch('/api/wallet/sources/seed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -103,13 +103,13 @@ export default function WalletPage() {
       queryClient.invalidateQueries({ queryKey: ['wallet-sources'] });
       toast.success('Test balances seeded');
     },
-    onError: (e: any) => {
+    onError: (e) => {
       console.error(e);
       toast.error(e.message || 'Failed to seed balances');
     },
   });
 
-  const sourceLabel = (s: string) => {
+  const sourceLabel = (s) => {
     if (!s) return '-';
     const v = String(s).toLowerCase();
     if (v === 'kcb') return 'KCB Wallet';
@@ -120,10 +120,10 @@ export default function WalletPage() {
 
   const sources = sourcesQuery.data?.sources || [];
   const allZeroOrMissing =
-    !sources.length || sources.every((s: any) => Number(s.balance || 0) === 0);
+    !sources.length || sources.every((s) => Number(s.balance || 0) === 0);
 
   // Transform activity data for TransactionRow
-  const transactions = (activityQuery.data?.items || []).map((t: any) => ({
+  const transactions = (activityQuery.data?.items || []).map((t) => ({
     id: t.id || Math.random().toString(),
     type: t.type === 'credit' ? 'receive' : 'send',
     title: t.title || (t.type === 'credit' ? 'Received' : 'Sent'),
@@ -241,7 +241,7 @@ export default function WalletPage() {
                 </div>
               ) : sources.length ? (
                 <div className="space-y-2">
-                  {sources.map((s: any) => (
+                  {sources.map((s) => (
                     <div
                       key={`${s.source}-${s.currency}`}
                       className="flex items-center justify-between p-3 bg-background rounded-xl border border-[#E0E0E0]"

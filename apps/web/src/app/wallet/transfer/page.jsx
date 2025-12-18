@@ -12,11 +12,11 @@ export default function WalletTransferPage() {
   const navigate = useNavigate();
   const [amount, setAmount] = useState('');
   const [email, setEmail] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<any>(null);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
   const mutation = useMutation({
-    mutationFn: async (payload: any) => {
+    mutationFn: async (payload) => {
       const res = await fetch('/api/wallet/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,7 @@ export default function WalletTransferPage() {
       setAmount('');
       setEmail('');
     },
-    onError: (e: any) => {
+    onError: (e) => {
       console.error(e);
       setError(e?.message || 'Could not send money');
       toast.error(e?.message || 'Could not send money');
@@ -54,7 +54,7 @@ export default function WalletTransferPage() {
     return true;
   }, [amount, email]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     setSuccess(null);
     setError(null);
