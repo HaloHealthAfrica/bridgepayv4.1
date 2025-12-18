@@ -6,9 +6,16 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "/api/server"
     }
   ],
+  "functions": {
+    "apps/web/api/server.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 30,
+      "includeFiles": "apps/web/build/**"
+    }
+  },
   "headers": [
     {
       "source": "/api/(.*)",
