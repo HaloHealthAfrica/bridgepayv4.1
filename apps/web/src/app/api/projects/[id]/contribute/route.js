@@ -127,7 +127,7 @@ export const POST = withErrorHandling(async (request, { params: { id } }) => {
   const amount = Number(validated.amount);
 
   // Create payment intent
-  const { getOrCreateWallet } = await import("../../wallet/_helpers");
+  const { getOrCreateWallet } = await import("../../../wallet/_helpers");
   const wallet = await getOrCreateWallet(session.user.id, currency);
 
   // Build funding plan (use provided or auto-generate)
