@@ -3,7 +3,7 @@
  * Returns status of all circuit breakers (admin only)
  */
 
-import { getCircuitBreakerStatus } from "../../../../../lib/resilience/circuitBreaker.js";
+import { getCircuitBreakerStatus } from "../../../../../../lib/resilience/circuitBreaker.js";
 import {
   successResponse,
   withErrorHandling,
