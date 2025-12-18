@@ -38,7 +38,7 @@ export const paymentWorker = new Worker(
     const lemonade = await import('../../web/src/app/api/utils/lemonadeClient.js');
     const sql = await import('../../web/src/app/api/utils/sql.js');
     const { lemonadeBreaker } = await import('../../web/src/lib/resilience/circuitBreaker.js');
-    const { retryWithBackoff } = await import('../../web/src/lib/resilience/retry.js');
+    const { retryWithBackoff } = await import('../resilience/retry.js');
 
     try {
       // Process payment with retry and circuit breaker
@@ -76,7 +76,7 @@ export const paymentWorker = new Worker(
       return { ok: true, result };
     } catch (error) {
       // Update payment intent with error
-      const sql = await import('@/app/api/utils/sql');
+      const sql = await import('../../web/src/app/api/utils/sql.js');
       await sql.default(
         `UPDATE payment_intents 
          SET status = 'failed', 
