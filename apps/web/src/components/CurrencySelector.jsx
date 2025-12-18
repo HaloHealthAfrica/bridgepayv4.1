@@ -9,7 +9,7 @@ const SUPPORTED_CURRENCIES = [
   { code: "ETB", name: "Ethiopian Birr", symbol: "Br" },
 ];
 
-export default function CurrencySelector({ value, onChange, className = "" }) {
+function CurrencySelector({ value, onChange, className = "" }) {
   const [isOpen, setIsOpen] = useState(false);
   const selected = SUPPORTED_CURRENCIES.find((c) => c.code === value) || SUPPORTED_CURRENCIES[0];
 
@@ -67,4 +67,6 @@ export default function CurrencySelector({ value, onChange, className = "" }) {
 }
 
 export { SUPPORTED_CURRENCIES };
+export { CurrencySelector };
+export default CurrencySelector;
 
