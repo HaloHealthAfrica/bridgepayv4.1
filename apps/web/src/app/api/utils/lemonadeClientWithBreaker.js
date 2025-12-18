@@ -3,7 +3,7 @@
  * Wrapper around lemonadeClient that uses circuit breaker
  */
 
-import { lemonadeBreaker } from '../../../../lib/resilience/circuitBreaker.js';
+import { lemonadeBreaker } from '@/lib/resilience/circuitBreaker.js';
 import lemonadeClient from './lemonadeClient.js';
 
 /**
