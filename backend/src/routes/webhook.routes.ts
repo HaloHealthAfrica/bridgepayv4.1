@@ -72,6 +72,17 @@ callbackRouter.post(
   })
 );
 
+// M-Pesa C2B (Paybill) confirmation endpoint
+callbackRouter.post(
+  "/mpesa/c2b/confirmation",
+  webhookRateLimiter,
+  verifyMpesaSource,
+  asyncHandler(async (req, res) => {
+    await mpesaService.handleC2BConfirmation(req.body);
+    res.json({ ok: true });
+  })
+);
+
 callbackRouter.post(
   "/lemonade",
   webhookRateLimiter,

@@ -25,6 +25,16 @@ function mapTx(meId: string, tx: BackendTransaction): UITransaction & { backendI
   if (tx.type === "TRANSFER" || tx.type === "PAYMENT" || tx.type === "ESCROW_RELEASE") {
     if (direction === "receive") title = `Payment from ${tx.fromUser?.name || "Someone"}`;
     else title = `Send to ${tx.toUser?.name || "Someone"}`;
+  } else if (tx.type === "DEPOSIT") {
+    const method = tx?.metadata?.method || tx?.metadata?.provider;
+    if (method === "paybill") title = "Paybill Deposit";
+    else if (method === "card" || method === "lemonade") title = "Diaspora Deposit (Card)";
+    else title = tx.description || "Deposit";
+  } else if (tx.type === "WITHDRAWAL") {
+    const method = tx?.metadata?.method || tx?.metadata?.provider;
+    if (method === "bank") title = "Bank Transfer (A2P)";
+    else if (method === "mpesa_b2c" || method === "mpesa") title = "M-Pesa Send / Withdrawal";
+    else title = tx.description || "Withdrawal";
   }
   return {
     backendId: tx.id,

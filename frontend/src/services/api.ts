@@ -16,10 +16,14 @@ export const walletAPI = {
   depositMpesa: (body: { amount: number; phone: string }) => http.post("/wallet/deposit/mpesa", body),
   depositCard: (body: { amount: number }) => http.post("/wallet/deposit/card", body),
   checkCardPaymentStatus: (providerTransactionId: string) => http.get(`/wallet/card/status/${providerTransactionId}`),
+  sendMpesa: (body: { amount: number; phone: string; note?: string }) => http.post("/wallet/send/mpesa", body),
   withdrawMpesa: (body: { amount: number; phone: string }) => http.post("/wallet/withdraw/mpesa", body),
+  withdrawBank: (body: { amount: number; bankCode: string; accountNumber: string; accountName: string; note?: string }) =>
+    http.post("/wallet/withdraw/bank", body),
   transfer: (body: { recipientPhone: string; amount: number; note?: string }) => http.post("/wallet/transfer", body),
   checkPaymentStatus: (checkoutRequestID: string) => http.get(`/wallet/mpesa/status/${checkoutRequestID}`),
   createReceipt: (transactionId: string) => http.post(`/wallet/transactions/${transactionId}/receipt`),
+  depositPaybill: (body: { amount: number }) => http.post("/wallet/deposit/paybill", body),
 };
 
 export const merchantAPI = {
@@ -49,6 +53,8 @@ export const projectAPI = {
     http.post(`/projects/${id}/apply`, body),
   assignImplementer: (id: string, implementerId: string) => http.post(`/projects/${id}/assign`, { implementerId }),
   fundProject: (id: string) => http.post(`/projects/${id}/fund`),
+  fundProjectCard: (id: string, body: { amount: number }) => http.post(`/projects/${id}/fund/card`, body),
+  checkProjectCardFundingStatus: (providerTransactionId: string) => http.get(`/projects/card/status/${providerTransactionId}`),
   approveMilestone: (projectId: string, milestoneId: string, notes?: string) =>
     http.post(`/projects/${projectId}/milestones/${milestoneId}/approve`, { notes }),
   rejectMilestone: (projectId: string, milestoneId: string, reason?: string) =>

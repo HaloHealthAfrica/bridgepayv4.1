@@ -113,7 +113,7 @@ export function SettingsHome() {
         <div className="text-lg font-bold mb-3">Account Settings</div>
         <SettingsItem icon={User} title="Personal Information" subtitle="Name, email, phone number" to="/settings/profile" />
         <SettingsItem icon={FileText} title="KYC Verification" subtitle={kycStatus === "VERIFIED" ? "Verified ✓" : "Complete verification"} to="/settings/kyc" />
-        <SettingsItem icon={CreditCard} title="Connected Accounts" subtitle="M-Pesa, Bank accounts (UI only)" to="/settings/accounts" />
+        <SettingsItem icon={CreditCard} title="Connected Accounts" subtitle="M-Pesa, Paybill, Bank (A2P), Diaspora rails" to="/settings/accounts" />
       </div>
 
       <div className="mb-6">

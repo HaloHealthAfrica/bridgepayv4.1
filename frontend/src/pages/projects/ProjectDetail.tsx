@@ -20,6 +20,11 @@ export function ProjectDetail() {
   const [project, setProject] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [evidence, setEvidence] = useState<any | null>(null);
+  const [cardFundingTxn, setCardFundingTxn] = useState<string>(() =>
+    id ? localStorage.getItem(`bridge_project_card_fund_${id}`) || "" : ""
+  );
+  const [checkingCard, setCheckingCard] = useState(false);
+  const [cardFundingStatus, setCardFundingStatus] = useState<any | null>(null);
 
   const isOwner = project?.ownerId && user?.id ? project.ownerId === user.id : false;
   const canVerify = user?.role === "PROJECT_VERIFIER" || isOwner;
@@ -40,6 +45,7 @@ export function ProjectDetail() {
   const budget = Number(project?.budget || 0);
   const escrow = Number(project?.escrowBalance || 0);
   const progress = budget > 0 ? (escrow / budget) * 100 : 0;
+  const remaining = Math.max(0, budget - escrow);
 
   const milestones = project?.milestones || [];
   const doneCount = useMemo(() => milestones.filter((m: any) => m.status === "APPROVED").length, [milestones]);
@@ -143,6 +149,83 @@ export function ProjectDetail() {
             >
               Fund Project (from wallet)
             </PrimaryButton>
+          </div>
+        ) : null}
+
+        {/* Diaspora/Card funding to project escrow */}
+        {project.implementerId && ["ASSIGNED", "ACTIVE"].includes(project.status) && remaining > 0 ? (
+          <div className="mt-4">
+            <div className="bg-background border border-gray-200 rounded-button p-4 mb-3">
+              <div className="font-semibold mb-1">Diaspora Funding (Card)</div>
+              <div className="text-sm text-text-secondary">
+                Fund this project via card. Funds are locked in escrow and tracked against the project.
+              </div>
+              <div className="text-xs text-text-secondary mt-2">Remaining to fund: {formatKES(remaining)}</div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <SecondaryButton
+                onClick={async () => {
+                  if (!id) return;
+                  if (!cardFundingTxn) return alert("No pending card funding transaction found.");
+                  setCheckingCard(true);
+                  try {
+                    const res = await projectAPI.checkProjectCardFundingStatus(cardFundingTxn);
+                    setCardFundingStatus(res.data.data);
+                    const tx = res.data.data.transaction;
+                    if (tx?.status && tx.status !== "PENDING") {
+                      localStorage.removeItem(`bridge_project_card_fund_${id}`);
+                      setCardFundingTxn("");
+                    }
+                    const proj = await projectAPI.getProjectById(id);
+                    setProject(proj.data.data.project);
+                  } catch (e: any) {
+                    alert(e?.response?.data?.error?.message || "Status check failed");
+                  } finally {
+                    setCheckingCard(false);
+                  }
+                }}
+              >
+                {checkingCard ? "Checking..." : "Check Card Status"}
+              </SecondaryButton>
+
+              <PrimaryButton
+                icon={DollarSign}
+                onClick={async () => {
+                  if (!id) return;
+                  const raw = prompt(`Enter amount to fund (max ${remaining} KES)`);
+                  if (!raw) return;
+                  const amt = Number(raw);
+                  if (!Number.isFinite(amt) || amt < 1) return alert("Enter a valid amount");
+                  if (amt > remaining) return alert(`Maximum funding is KES ${remaining}`);
+
+                  try {
+                    const res = await projectAPI.fundProjectCard(id, { amount: amt });
+                    const providerTxn = res.data.data.providerTransactionId as string | undefined;
+                    const url = res.data.data.checkoutUrl as string | undefined;
+                    if (providerTxn) {
+                      localStorage.setItem(`bridge_project_card_fund_${id}`, providerTxn);
+                      setCardFundingTxn(providerTxn);
+                    }
+                    if (url) window.location.href = url;
+                    else alert("No checkout URL returned.");
+                  } catch (e: any) {
+                    alert(e?.response?.data?.error?.message || "Card funding failed");
+                  }
+                }}
+              >
+                Fund via Card
+              </PrimaryButton>
+            </div>
+
+            {cardFundingTxn ? (
+              <div className="mt-3 text-xs text-text-secondary font-mono break-all">Provider Txn: {cardFundingTxn}</div>
+            ) : null}
+            {cardFundingStatus?.transaction ? (
+              <div className="mt-2 text-xs text-text-secondary">
+                Last status: <span className="font-semibold">{cardFundingStatus.transaction.status}</span>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

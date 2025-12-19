@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowDownLeft, ArrowUpRight, BarChart3, History, QrCode } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, BarChart3, History, QrCode, Building2, ReceiptText } from "lucide-react";
 import { walletAPI, merchantAPI } from "../../services/api";
 import { useAuthStore } from "../../store/auth.store";
 import { WalletHeroCard } from "../../components/wallet/WalletHeroCard";
@@ -37,9 +37,15 @@ function mapTx(meId: string, tx: BackendTransaction): UITransaction & { backendI
     if (direction === "receive") title = `Payment from ${tx.fromUser?.name || "Someone"}`;
     else title = `Send to ${tx.toUser?.name || "Someone"}`;
   } else if (tx.type === "DEPOSIT") {
-    title = tx.description || "Deposit";
+    const method = tx?.metadata?.method || tx?.metadata?.provider;
+    if (method === "paybill") title = "Paybill Deposit";
+    else if (method === "card" || method === "lemonade") title = "Diaspora Deposit (Card)";
+    else title = tx.description || "Deposit";
   } else if (tx.type === "WITHDRAWAL") {
-    title = tx.description || "Withdrawal";
+    const method = tx?.metadata?.method || tx?.metadata?.provider;
+    if (method === "bank") title = "Bank Transfer (A2P)";
+    else if (method === "mpesa_b2c" || method === "mpesa") title = "M-Pesa Send / Withdrawal";
+    else title = tx.description || "Withdrawal";
   }
 
   return {
@@ -103,6 +109,8 @@ export function WalletHome() {
         <QuickActionCard icon={ArrowUpRight} label="Send Money" onClick={() => navigate("/wallet/send")} />
         <QuickActionCard icon={QrCode} label="QR Pay" onClick={() => navigate("/wallet/qr")} />
         <QuickActionCard icon={History} label="History" onClick={() => navigate("/wallet/history")} />
+        <QuickActionCard icon={ReceiptText} label="Paybill Deposit" onClick={() => navigate("/wallet/add?method=paybill")} />
+        <QuickActionCard icon={Building2} label="Bank Transfer" onClick={() => navigate("/settings/withdraw?method=bank")} />
       </div>
 
       {user?.role === "MERCHANT" ? (

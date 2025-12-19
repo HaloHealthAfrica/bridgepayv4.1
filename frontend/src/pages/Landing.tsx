@@ -5,6 +5,8 @@ import {
   QrCode,
   CreditCard,
   Phone,
+  Building2,
+  ReceiptText,
   Lock,
   ClipboardCheck,
   Users,
@@ -135,11 +137,19 @@ export function Landing() {
               </div>
               <div className="bg-surface border border-gray-200 rounded-button p-4">
                 <div className="text-sm font-semibold text-text mb-1">Local payments</div>
-                <div className="text-xs text-text-secondary">STK push, card checkout, and QR pay.</div>
+                <div className="text-xs text-text-secondary">STK Push, Paybill, card checkout, and QR pay.</div>
               </div>
               <div className="bg-surface border border-gray-200 rounded-button p-4">
                 <div className="text-sm font-semibold text-text mb-1">Accountability</div>
                 <div className="text-xs text-text-secondary">Less “trust me.” More proof.</div>
+              </div>
+              <div className="bg-surface border border-gray-200 rounded-button p-4">
+                <div className="text-sm font-semibold text-text mb-1">Withdraw to bank</div>
+                <div className="text-xs text-text-secondary">A2P bank transfers from your wallet.</div>
+              </div>
+              <div className="bg-surface border border-gray-200 rounded-button p-4">
+                <div className="text-sm font-semibold text-text mb-1">Diaspora rails</div>
+                <div className="text-xs text-text-secondary">Card and diaspora funding options to wallet or projects.</div>
               </div>
             </div>
 
@@ -172,7 +182,17 @@ export function Landing() {
           <Card
             icon={<Phone size={20} />}
             title="Payments that work locally"
-            body="Use mobile money (STK Push), cards, and QR payments — built for African usage."
+            body="Use mobile money (STK Push), Paybill, cards, and QR payments — built for African usage."
+          />
+          <Card
+            icon={<ReceiptText size={20} />}
+            title="Paybill Deposits"
+            body="Top up using a Paybill number and your unique account reference."
+          />
+          <Card
+            icon={<Building2 size={20} />}
+            title="Bank Transfer (A2P)"
+            body="Withdraw from your wallet to a bank account when you need it."
           />
           <Card
             icon={<ClipboardCheck size={20} />}
@@ -231,7 +251,7 @@ export function Landing() {
           <Card icon={<ShieldCheck size={20} />} title="Funds are traceable" body="Every deposit, payment, and release is logged with references." />
           <Card icon={<ClipboardCheck size={20} />} title="Projects can be verified" body="Milestone approvals provide proof before funds move." />
           <Card icon={<QrCode size={20} />} title="Payments are logged" body="QR and wallet payments leave a clear record for both sides." />
-          <Card icon={<CreditCard size={20} />} title="Built for African realities" body="Mobile money workflows, cards, and low-bandwidth friendliness." />
+          <Card icon={<CreditCard size={20} />} title="Built for African realities" body="Mobile money workflows, Paybill, cards, and low-bandwidth friendliness." />
         </div>
 
         <div className="mt-6 text-sm text-text-secondary">

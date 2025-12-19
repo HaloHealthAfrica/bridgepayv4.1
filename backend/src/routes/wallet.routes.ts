@@ -47,5 +47,29 @@ walletRouter.post(
   validate(walletSchemas.withdraw),
   asyncHandler(walletController.withdrawMpesa)
 );
+walletRouter.post(
+  "/withdraw/bank",
+  requireAuth,
+  paymentRateLimiter,
+  idempotencyMiddleware,
+  validate(walletSchemas.withdrawBank),
+  asyncHandler(walletController.withdrawBank)
+);
+walletRouter.post(
+  "/send/mpesa",
+  requireAuth,
+  paymentRateLimiter,
+  idempotencyMiddleware,
+  validate(walletSchemas.sendMpesa),
+  asyncHandler(walletController.sendMpesa)
+);
+walletRouter.post(
+  "/deposit/paybill",
+  requireAuth,
+  paymentRateLimiter,
+  idempotencyMiddleware,
+  validate(walletSchemas.depositPaybill),
+  asyncHandler(walletController.depositPaybill)
+);
 walletRouter.get("/mpesa/status/:checkoutRequestID", requireAuth, asyncHandler(walletController.checkPaymentStatus));
 walletRouter.post("/transactions/:transactionId/receipt", requireAuth, asyncHandler(walletController.createReceipt));

@@ -3,6 +3,9 @@ import multer from "multer";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { requireAuth } from "../middleware/auth";
 import * as projectController from "../controllers/project.controller";
+import { validate, projectSchemas } from "../middleware/validation";
+import { paymentRateLimiter } from "../middleware/rateLimiter";
+import { idempotencyMiddleware } from "../middleware/idempotency";
 
 export const projectRouter = Router();
 
@@ -18,6 +21,19 @@ projectRouter.post("/:id/publish", requireAuth, asyncHandler(projectController.p
 projectRouter.post("/:id/apply", requireAuth, asyncHandler(projectController.applyToProject));
 projectRouter.post("/:id/assign", requireAuth, asyncHandler(projectController.assignImplementer));
 projectRouter.post("/:id/fund", requireAuth, asyncHandler(projectController.fundProject));
+projectRouter.post(
+  "/:id/fund/card",
+  requireAuth,
+  paymentRateLimiter,
+  idempotencyMiddleware,
+  validate(projectSchemas.fundCard),
+  asyncHandler(projectController.fundProjectCard)
+);
+projectRouter.get(
+  "/card/status/:providerTransactionId",
+  requireAuth,
+  asyncHandler(projectController.checkProjectCardFundingStatus)
+);
 projectRouter.post(
   "/:projectId/milestones/:milestoneId/evidence",
   requireAuth,

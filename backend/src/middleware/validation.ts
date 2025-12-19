@@ -90,9 +90,24 @@ export const walletSchemas = {
     recipientPhone: kenyanPhoneSchema,
     note: z.string().max(200, "Note too long").optional(),
   }),
+  sendMpesa: z.object({
+    amount: amountSchema.refine((val) => val >= 10, "Minimum send is 10 KES"),
+    phone: kenyanPhoneSchema,
+    note: z.string().max(200, "Note too long").optional(),
+  }),
   withdraw: z.object({
     amount: amountSchema.refine((val) => val >= 10, "Minimum withdrawal is 10 KES"),
     phone: kenyanPhoneSchema,
+  }),
+  withdrawBank: z.object({
+    amount: amountSchema.refine((val) => val >= 50, "Minimum bank transfer is 50 KES"),
+    bankCode: z.string().min(1, "Bank code is required").max(50),
+    accountNumber: z.string().min(4, "Account number is required").max(50),
+    accountName: z.string().min(2, "Account name is required").max(120),
+    note: z.string().max(200, "Note too long").optional(),
+  }),
+  depositPaybill: z.object({
+    amount: amountSchema.refine((val) => val >= 1, "Minimum deposit is 1 KES"),
   }),
 };
 
@@ -129,5 +144,8 @@ export const projectSchemas = {
         })
       )
       .min(1, "At least one milestone is required"),
+  }),
+  fundCard: z.object({
+    amount: amountSchema.refine((val) => val >= 1, "Minimum funding amount is 1 KES"),
   }),
 };

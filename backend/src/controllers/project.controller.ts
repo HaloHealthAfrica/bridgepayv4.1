@@ -3,6 +3,11 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { uploadFilesToS3 } from "../services/storage.service";
+import lemonadeService from "../services/lemonade.service";
+
+function getCallbackBaseUrl() {
+  return process.env.APP_URL || process.env.BACKEND_URL || "http://localhost:3000";
+}
 
 export async function createProject(req: Request, res: Response) {
   const { title, description, category, budget, milestones, deadline } = req.body ?? {};
@@ -288,6 +293,106 @@ export async function fundProject(req: Request, res: Response) {
   });
 
   res.json({ success: true, message: "Project funded successfully" });
+}
+
+// Diaspora/Card -> Project escrow funding (via Lemonade checkout redirect)
+export async function fundProjectCard(req: Request, res: Response) {
+  const { id } = req.params;
+  const { amount } = req.body ?? {};
+  if (!id) throw new AppError("Project id required", 400);
+  if (!amount || Number(amount) < 1) throw new AppError("Minimum funding is KES 1", 400);
+
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true, title: true, ownerId: true, budget: true, escrowBalance: true, implementerId: true, status: true } });
+  if (!project) throw new AppError("Project not found", 404);
+  if (!project.implementerId) throw new AppError("Assign implementer first", 400);
+
+  const remaining = Number(project.budget) - Number(project.escrowBalance);
+  if (remaining <= 0) throw new AppError("Project already fully funded", 400);
+  if (Number(amount) > remaining) throw new AppError(`Maximum funding is KES ${remaining}`, 400);
+  if (!["ASSIGNED", "ACTIVE"].includes(project.status)) throw new AppError("Project not ready for funding", 400);
+
+  const walletNo = process.env.LEMONADE_WALLET_NO || "";
+  if (!walletNo) throw new AppError("Card funding not configured (LEMONADE_WALLET_NO missing)", 500);
+
+  const payer = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { id: true, name: true, phone: true, email: true } });
+  if (!payer) throw new AppError("User not found", 404);
+
+  const reference = `CARD-PROJ-${Date.now()}`;
+  const resultUrl = `${getCallbackBaseUrl()}/api/callback/lemonade`;
+
+  const txRow = await prisma.transaction.create({
+    data: {
+      fromUserId: payer.id,
+      toUserId: project.ownerId,
+      amount: new Prisma.Decimal(amount),
+      type: "ESCROW_LOCK",
+      status: "PENDING",
+      reference,
+      description: `Project funding (card): ${project.title}`,
+      metadata: { projectId: project.id, method: "card", provider: "lemonade", kind: "project_funding" },
+    },
+  });
+
+  try {
+    const initiated = await lemonadeService.initiateCardPayment({
+      walletNo,
+      reference,
+      amount: Number(amount),
+      currency: "KES",
+      customerName: payer.name,
+      customerPhone: payer.phone,
+      description: `Bridge: Fund project ${project.title}`,
+      resultUrl,
+      email: payer.email,
+    });
+
+    await prisma.transaction.update({
+      where: { id: txRow.id },
+      data: {
+        metadata: {
+          ...(txRow.metadata as any),
+          lemonade: {
+            transaction_id: initiated.transactionId,
+            internal_id: initiated.internalId,
+            redirect_url: initiated.redirectUrl,
+          },
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        checkoutUrl: initiated.redirectUrl,
+        providerTransactionId: initiated.transactionId,
+        transaction: { id: txRow.id, reference: txRow.reference, amount: Number(txRow.amount), status: txRow.status },
+      },
+    });
+  } catch (e: any) {
+    await prisma.transaction.update({ where: { id: txRow.id }, data: { status: "FAILED" } });
+    throw new AppError(e?.message || "Failed to initiate card funding", 500);
+  }
+}
+
+export async function checkProjectCardFundingStatus(req: Request, res: Response) {
+  const { providerTransactionId } = req.params;
+  if (!providerTransactionId) throw new AppError("providerTransactionId required", 400);
+
+  const txRow = await prisma.transaction.findFirst({
+    where: {
+      fromUserId: req.user!.userId,
+      type: "ESCROW_LOCK",
+      metadata: { path: ["lemonade", "transaction_id"], equals: providerTransactionId },
+    },
+  });
+  if (!txRow) throw new AppError("Transaction not found", 404);
+
+  const status = await lemonadeService.queryStatus(providerTransactionId);
+  const ref = (status as any)?.data?.external_reference || txRow.reference;
+  await lemonadeService.reconcileBridgeTransactionByReference(String(ref), status);
+
+  const updated = await prisma.transaction.findUnique({ where: { id: txRow.id } });
+  res.json({ success: true, data: { provider: status, transaction: updated } });
 }
 
 export async function submitEvidence(req: Request, res: Response) {

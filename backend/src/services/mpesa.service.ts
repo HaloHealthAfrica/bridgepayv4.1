@@ -156,6 +156,52 @@ class MpesaService {
 
     return data;
   }
+
+  // C2B Confirmation handler (Paybill)
+  async handleC2BConfirmation(payload: any) {
+    // Expected Safaricom C2B payload fields (production/sandbox may vary):
+    // - TransID, TransTime, TransAmount, BusinessShortCode, BillRefNumber, MSISDN, FirstName, MiddleName, LastName
+    const billRef = payload?.BillRefNumber || payload?.billRefNumber || payload?.AccountReference;
+    const amount = Number(payload?.TransAmount || payload?.TransAmount || payload?.amount || 0);
+    if (!billRef || !amount) return;
+
+    // Our Paybill deposits use accountReference = `BR-${userId}`
+    const userId = String(billRef).startsWith("BR-") ? String(billRef).slice("BR-".length) : null;
+    if (!userId) return;
+
+    // Find latest pending paybill deposit for this user
+    const txRow = await prisma.transaction.findFirst({
+      where: {
+        toUserId: userId,
+        type: "DEPOSIT",
+        status: "PENDING",
+        metadata: { path: ["method"], equals: "paybill" },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!txRow) return;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.transaction.update({
+        where: { id: txRow.id },
+        data: { status: "SUCCESS", metadata: { ...(txRow.metadata as any), c2b: payload } },
+      });
+      await tx.wallet.update({
+        where: { userId },
+        data: { balance: { increment: txRow.amount } },
+      });
+      await tx.notification.create({
+        data: {
+          userId,
+          type: "PAYMENT",
+          title: "Paybill Deposit Received",
+          message: `KES ${txRow.amount} added to your wallet`,
+          actionUrl: "/wallet",
+        },
+      });
+    });
+  }
 }
 
 export default new MpesaService();

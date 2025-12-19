@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowUpRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowUpRight, Phone, Wallet } from "lucide-react";
 import { walletAPI } from "../../services/api";
 import { PrimaryButton } from "../../components/ui/Buttons";
 
 export function SendMoney() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState<"wallet" | "mpesa">("wallet");
   const [recipientPhone, setRecipientPhone] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -14,18 +16,31 @@ export function SendMoney() {
   const fee = 0;
   const total = useMemo(() => (Number(amount || 0) || 0) + fee, [amount]);
 
+  useEffect(() => {
+    const m = (searchParams.get("mode") || "").toLowerCase();
+    if (m === "mpesa") setMode("mpesa");
+    if (m === "wallet") setMode("wallet");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!recipientPhone) return alert("Recipient required");
-    if (Number(amount) < 1) return alert("Minimum transfer is KES 1");
+    if (mode === "wallet" && Number(amount) < 1) return alert("Minimum transfer is KES 1");
+    if (mode === "mpesa" && Number(amount) < 10) return alert("Minimum M-Pesa send is KES 10");
 
     setLoading(true);
     try {
-      await walletAPI.transfer({ recipientPhone, amount: Number(amount), note: note || undefined });
-      alert("Transfer successful!");
+      if (mode === "wallet") {
+        await walletAPI.transfer({ recipientPhone, amount: Number(amount), note: note || undefined });
+        alert("Transfer successful!");
+      } else {
+        await walletAPI.sendMpesa({ phone: recipientPhone, amount: Number(amount), note: note || undefined });
+        alert("M-Pesa send initiated!");
+      }
       navigate("/wallet");
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || "Transfer failed");
+      alert(err?.response?.data?.error?.message || (mode === "wallet" ? "Transfer failed" : "Send failed"));
     } finally {
       setLoading(false);
     }
@@ -43,12 +58,45 @@ export function SendMoney() {
 
       <form onSubmit={onSubmit} className="bg-surface rounded-card p-6 border border-gray-200">
         <div className="mb-6">
+          <div className="font-semibold mb-3">Send Method</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setMode("wallet")}
+              className={`p-4 rounded-button border-2 flex items-center gap-3 ${
+                mode === "wallet" ? "border-primary bg-primary-light" : "border-gray-200 bg-surface"
+              }`}
+            >
+              <Wallet className={mode === "wallet" ? "text-primary" : "text-text-secondary"} />
+              <div className="flex-1 text-left">
+                <div className="font-semibold">Bridge Wallet (P2P)</div>
+                <div className="text-xs text-text-secondary">Instant transfer to another Bridge user</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMode("mpesa")}
+              className={`p-4 rounded-button border-2 flex items-center gap-3 ${
+                mode === "mpesa" ? "border-primary bg-primary-light" : "border-gray-200 bg-surface"
+              }`}
+            >
+              <Phone className={mode === "mpesa" ? "text-primary" : "text-text-secondary"} />
+              <div className="flex-1 text-left">
+                <div className="font-semibold">M-Pesa Send Money</div>
+                <div className="text-xs text-text-secondary">Send to any phone number via B2C</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6">
           <label className="block mb-2 font-semibold">Recipient</label>
           <input
             type="text"
             value={recipientPhone}
             onChange={(e) => setRecipientPhone(e.target.value)}
-            placeholder="Phone number (e.g. 0722...)"
+            placeholder={mode === "wallet" ? "Bridge user's phone (e.g. 0722...)" : "M-Pesa phone (e.g. 0722...)"}
             className="w-full p-4 border-2 border-gray-200 rounded-button bg-surface"
           />
         </div>
@@ -87,7 +135,7 @@ export function SendMoney() {
         </div>
 
         <PrimaryButton type="submit" icon={ArrowUpRight} fullWidth disabled={loading}>
-          {loading ? "Sending..." : "Send Money"}
+          {loading ? "Sending..." : mode === "wallet" ? "Send Money" : "Send via M-Pesa"}
         </PrimaryButton>
       </form>
     </div>

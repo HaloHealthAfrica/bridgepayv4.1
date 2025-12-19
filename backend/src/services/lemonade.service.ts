@@ -168,6 +168,46 @@ class LemonadeService {
         });
         if (updated.count !== 1) return;
 
+        // Project escrow funding: credit project escrow + owner's escrow wallet (so milestone releases don't go negative)
+        if (txRow.type === "ESCROW_LOCK") {
+          const projectId = (txRow.metadata as any)?.projectId as string | undefined;
+          if (projectId) {
+            const project = await tx.project.findUnique({ where: { id: projectId }, select: { id: true, ownerId: true, budget: true, escrowBalance: true, implementerId: true, status: true, title: true } });
+            if (project) {
+              await tx.project.update({
+                where: { id: project.id },
+                data: { escrowBalance: { increment: txRow.amount } },
+              });
+              await tx.wallet.update({
+                where: { userId: project.ownerId },
+                data: { escrowBalance: { increment: txRow.amount } },
+              });
+
+              // If fully funded and implementer is assigned, activate project
+              const nextEscrow = Number(project.escrowBalance) + Number(txRow.amount);
+              const budget = Number(project.budget);
+              if (project.implementerId && nextEscrow >= budget && project.status === "ASSIGNED") {
+                await tx.project.update({
+                  where: { id: project.id },
+                  data: { status: "ACTIVE", startDate: new Date() },
+                });
+              }
+
+              await tx.notification.create({
+                data: {
+                  userId: project.ownerId,
+                  type: "PROJECT",
+                  title: "Project Funded (Card)",
+                  message: `Funds received for project: ${project.title}`,
+                  actionUrl: `/projects/${project.id}`,
+                },
+              });
+            }
+          }
+          return;
+        }
+
+        // Default: credit wallet balance of receiver (top-ups, merchant payments to wallet)
         if (txRow.toUserId) {
           await tx.wallet.update({
             where: { userId: txRow.toUserId },
@@ -178,7 +218,7 @@ class LemonadeService {
               userId: txRow.toUserId,
               type: "PAYMENT",
               title: "Card Payment Successful",
-              message: `KES ${txRow.amount} added to your wallet`,
+              message: `KES ${txRow.amount} received`,
               actionUrl: "/wallet",
             },
           });

@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import mpesaService from "../services/mpesa.service";
 import lemonadeService from "../services/lemonade.service";
+import wapipayService from "../services/wapipay.service";
 import { generateReceipt } from "../services/receipt.service";
 
 export async function getBalance(req: Request, res: Response) {
@@ -340,6 +341,189 @@ export async function withdrawMpesa(req: Request, res: Response) {
 
     throw new AppError("Withdrawal failed", 500);
   }
+}
+
+// M-Pesa send money (wallet -> any phone). This is functionally similar to withdraw,
+// but the UX is "send to phone number" and we allow an optional note.
+export async function sendMpesa(req: Request, res: Response) {
+  const { amount, phone, note } = req.body ?? {};
+  if (!amount || Number(amount) < 10) throw new AppError("Minimum send is KES 10", 400);
+  if (!phone) throw new AppError("Phone number required", 400);
+
+  const fee = Math.min(Number(amount) * 0.01, 50);
+  const total = Number(amount) + fee;
+
+  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
+  if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.wallet.update({
+      where: { userId: req.user!.userId },
+      data: { balance: { decrement: new Prisma.Decimal(total) } },
+    });
+
+    return tx.transaction.create({
+      data: {
+        fromUserId: req.user!.userId,
+        amount: new Prisma.Decimal(amount),
+        fee: new Prisma.Decimal(fee),
+        type: "WITHDRAWAL",
+        status: "PENDING",
+        reference: `MPESA-SEND-${Date.now()}`,
+        description: note || `M-Pesa send to ${phone}`,
+        metadata: { phone, method: "mpesa_b2c", kind: "send_money" },
+      },
+    });
+  });
+
+  try {
+    const b2cResponse = await mpesaService.withdrawToMpesa(String(phone), Number(amount), "Bridge Send Money");
+
+    await prisma.transaction.update({
+      where: { id: created.id },
+      data: {
+        metadata: {
+          ...(created.metadata as any),
+          conversationID: b2cResponse.ConversationID,
+          originatorConversationID: b2cResponse.OriginatorConversationID,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { transaction: created, message: "Send initiated. Recipient will receive M-Pesa shortly." },
+    });
+  } catch (error: any) {
+    await prisma.$transaction(async (tx) => {
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { increment: new Prisma.Decimal(total) } },
+      });
+
+      await tx.transaction.update({
+        where: { id: created.id },
+        data: { status: "FAILED", metadata: { ...(created.metadata as any), error: error?.message } },
+      });
+    });
+
+    throw new AppError("Send failed", 500);
+  }
+}
+
+// A2P: Bank transfer via wallet (payout to bank account)
+export async function withdrawBank(req: Request, res: Response) {
+  const { amount, bankCode, accountNumber, accountName, note } = req.body ?? {};
+  if (!amount || Number(amount) < 50) throw new AppError("Minimum bank transfer is KES 50", 400);
+  if (!bankCode || !accountNumber || !accountName) throw new AppError("Bank details required", 400);
+
+  // Basic fee policy (can be adjusted later)
+  const fee = Math.min(Math.max(Number(amount) * 0.01, 20), 200); // 1% (min 20, max 200)
+  const total = Number(amount) + fee;
+
+  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
+  if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.wallet.update({
+      where: { userId: req.user!.userId },
+      data: { balance: { decrement: new Prisma.Decimal(total) } },
+    });
+
+    return tx.transaction.create({
+      data: {
+        fromUserId: req.user!.userId,
+        amount: new Prisma.Decimal(amount),
+        fee: new Prisma.Decimal(fee),
+        type: "WITHDRAWAL",
+        status: "PENDING",
+        reference: `BANK-${Date.now()}`,
+        description: note || `Bank transfer to ${accountName}`,
+        metadata: { method: "bank", bankCode, accountNumber, accountName, provider: "wapipay" },
+      },
+    });
+  });
+
+  try {
+    const payout = await wapipayService.createBankPayout({
+      reference: created.reference,
+      amount: Number(amount),
+      currency: "KES",
+      bank_code: bankCode,
+      account_number: accountNumber,
+      account_name: accountName,
+      narration: note || "Bridge bank transfer",
+    });
+
+    await prisma.transaction.update({
+      where: { id: created.id },
+      data: {
+        metadata: { ...(created.metadata as any), providerRef: payout.providerRef, wapipay: payout.raw },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { transaction: created, message: "Bank transfer initiated. You will be notified when complete." },
+    });
+  } catch (e: any) {
+    // refund on failure to initiate
+    await prisma.$transaction(async (tx) => {
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { increment: new Prisma.Decimal(total) } },
+      });
+      await tx.transaction.update({
+        where: { id: created.id },
+        data: { status: "FAILED", metadata: { ...(created.metadata as any), error: e?.message } },
+      });
+    });
+
+    throw new AppError(e?.message || "Bank transfer failed", 500);
+  }
+}
+
+// Paybill deposit instructions (manual Paybill/C2B)
+export async function depositPaybill(req: Request, res: Response) {
+  const { amount } = req.body ?? {};
+  if (!amount || Number(amount) < 1) throw new AppError("Minimum deposit is KES 1", 400);
+
+  const paybill = process.env.MPESA_PAYBILL || process.env.MPESA_SHORTCODE || "";
+  if (!paybill) throw new AppError("MPESA_PAYBILL not configured", 500);
+
+  // Use a stable account reference so C2B confirmation can credit the right wallet
+  const accountReference = `BR-${req.user!.userId}`;
+
+  const txRow = await prisma.transaction.create({
+    data: {
+      toUserId: req.user!.userId,
+      amount: new Prisma.Decimal(amount),
+      type: "DEPOSIT",
+      status: "PENDING",
+      reference: `PAYBILL-DEP-${Date.now()}`,
+      description: "Paybill deposit",
+      metadata: { method: "paybill", paybill, accountReference },
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      paybill,
+      accountReference,
+      amount: Number(txRow.amount),
+      transaction: { id: txRow.id, reference: txRow.reference, status: txRow.status },
+      instructions: [
+        "Go to M-Pesa menu",
+        "Select Lipa na M-Pesa",
+        "Select Pay Bill",
+        `Enter Business Number: ${paybill}`,
+        `Enter Account Number: ${accountReference}`,
+        `Enter Amount: ${Number(txRow.amount)}`,
+        "Enter your PIN to complete",
+      ],
+    },
+  });
 }
 
 export async function checkPaymentStatus(req: Request, res: Response) {
