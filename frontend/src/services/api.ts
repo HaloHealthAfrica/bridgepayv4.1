@@ -96,3 +96,37 @@ export const adminAPI = {
 };
 
 
+
+export const userAPI = {
+  search: (params: { q?: string; role?: string } = {}) => http.get("/users/search", { params }),
+  getImplementers: (params: { page?: number; limit?: number; skills?: string; minRating?: number } = {}) =>
+    http.get("/users/implementers", { params }),
+  getImplementerById: (id: string) => http.get(`/users/implementers/${id}`),
+  updateProfile: (body: {
+    bio?: string;
+    skills?: string[];
+    hourlyRate?: number;
+    availability?: string;
+    location?: string;
+    languages?: string[];
+    experience?: number;
+  }) => http.put("/users/profile", body),
+};
+
+export const reviewAPI = {
+  create: (body: { projectId: string; revieweeId: string; rating: number; comment?: string }) =>
+    http.post("/reviews", body),
+  getByUserId: (userId: string, params: { page?: number; limit?: number } = {}) =>
+    http.get(`/reviews/${userId}`, { params }),
+};
+
+export const messageAPI = {
+  getConversations: (params: { page?: number; limit?: number } = {}) =>
+    http.get("/messages/conversations", { params }),
+  getConversation: (conversationId: string, params: { page?: number; limit?: number } = {}) =>
+    http.get(`/messages/conversations/${conversationId}`, { params }),
+  createConversation: (body: { projectId?: string; participants: string[] }) =>
+    http.post("/messages/conversations", body),
+  sendMessage: (conversationId: string, body: { content: string; attachments?: any[] }) =>
+    http.post(`/messages/conversations/${conversationId}/messages`, body),
+};
