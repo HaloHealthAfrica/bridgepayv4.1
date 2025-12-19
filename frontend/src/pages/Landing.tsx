@@ -7,6 +7,7 @@ import {
   Phone,
   Building2,
   ReceiptText,
+  Shuffle,
   Lock,
   ClipboardCheck,
   Users,
@@ -111,6 +112,19 @@ export function Landing() {
               Bridge helps individuals, merchants, and communities move money with clarity — from wallet deposits to escrow
               releases — with a record you can trust.
             </p>
+            <div className="bg-primary-light border border-primary/20 rounded-button p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-button bg-surface flex items-center justify-center text-primary">
+                  <Shuffle size={18} />
+                </div>
+                <div>
+                  <div className="font-semibold text-text">Interoperable by design</div>
+                  <div className="text-sm text-text-secondary">
+                    Pay and fund projects from multiple sources — wallet, M‑Pesa, Paybill, card, and bank — all tracked in one place.
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <div className="flex flex-col sm:flex-row gap-3">
               <PrimaryButton onClick={() => navigate("/register")} icon={ArrowRight}>
@@ -193,6 +207,11 @@ export function Landing() {
             icon={<Building2 size={20} />}
             title="Bank Transfer (A2P)"
             body="Withdraw from your wallet to a bank account when you need it."
+          />
+          <Card
+            icon={<Shuffle size={20} />}
+            title="Interoperable payments"
+            body="One wallet view across sources — use what you have, keep one clear record."
           />
           <Card
             icon={<ClipboardCheck size={20} />}
