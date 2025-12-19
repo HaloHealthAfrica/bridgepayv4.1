@@ -22,6 +22,8 @@ import { Placeholder } from "./pages/settings/Placeholder";
 import { AdminConsole } from "./pages/admin/AdminConsole";
 import { MerchantDashboard } from "./pages/merchant/MerchantDashboard";
 import { MerchantPay } from "./pages/pay/MerchantPay";
+import { Landing } from "./pages/Landing";
+import { LegalPage } from "./pages/Legal";
 
 export function App() {
   const bootstrap = useAuthStore((s) => s.bootstrap);
@@ -99,9 +101,11 @@ export function App() {
           <div>Loading...</div>
         ) : (
         <Routes>
-          <Route path="/" element={<Navigate to="/wallet" replace />} />
+          <Route path="/" element={user ? <Navigate to="/wallet" replace /> : <Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/privacy" element={<LegalPage title="Privacy Policy" />} />
+          <Route path="/terms" element={<LegalPage title="Terms of Service" />} />
 
           <Route
             path="/wallet"
