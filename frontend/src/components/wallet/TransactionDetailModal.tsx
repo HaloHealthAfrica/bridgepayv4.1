@@ -69,3 +69,5 @@ export function TransactionDetailModal({ transaction, onClose, onReceipt }: Prop
 }
 
 
+
+

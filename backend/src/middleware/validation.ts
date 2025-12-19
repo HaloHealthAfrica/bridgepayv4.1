@@ -53,7 +53,7 @@ export function validate(schema: ZodSchema) {
       next();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        const messages = error.errors.map((err) => `${err.path.join(".")}: ${err.message}`);
+        const messages = error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
         next(new AppError(messages.join(", "), 400));
       } else {
         next(error);
@@ -87,7 +87,8 @@ export const walletSchemas = {
   }),
   transfer: z.object({
     amount: amountSchema.refine((val) => val >= 1, "Minimum transfer is 1 KES"),
-    recipientId: z.string().min(1, "Recipient ID is required"),
+    recipientPhone: kenyanPhoneSchema,
+    note: z.string().max(200, "Note too long").optional(),
   }),
   withdraw: z.object({
     amount: amountSchema.refine((val) => val >= 10, "Minimum withdrawal is 10 KES"),
@@ -97,11 +98,14 @@ export const walletSchemas = {
 
 export const merchantSchemas = {
   processQRPayment: z.object({
+    merchantId: z.string().min(1, "merchantId is required"),
     amount: amountSchema.refine((val) => val >= 1, "Minimum payment is 1 KES"),
-    qrData: z.string().min(1, "QR data is required"),
+    note: z.string().max(200, "Note too long").optional(),
   }),
   initiateCardPayment: z.object({
+    merchantId: z.string().min(1, "merchantId is required"),
     amount: amountSchema.refine((val) => val >= 1, "Minimum payment is 1 KES"),
+    note: z.string().max(200, "Note too long").optional(),
   }),
   updateProfile: z.object({
     businessName: z.string().min(1, "Business name is required").max(200).optional(),

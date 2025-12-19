@@ -1,7 +1,17 @@
 import { Request, Response, NextFunction } from "express";
 import { createHash } from "crypto";
-import { prisma } from "../lib/prisma";
 import { AppError } from "./errorHandler";
+
+type CachedResponse = {
+  statusCode?: number;
+  response?: any;
+  expiresAt: number;
+  inProgress: boolean;
+};
+
+// Best-effort in-memory idempotency cache (single-instance).
+// If you need cross-instance idempotency, back this with Redis or a DB table.
+const cache = new Map<string, CachedResponse>();
 
 // Extend Express Request to include idempotency key
 declare global {
@@ -25,8 +35,8 @@ export function idempotencyMiddleware(req: Request, res: Response, next: NextFun
   const idempotencyKey = req.headers["idempotency-key"] as string;
 
   if (!idempotencyKey) {
-    // Idempotency key is required for payment endpoints
-    return next(new AppError("Idempotency-Key header is required", 400));
+    // Optional: if client doesn't send a key, proceed without idempotency guarantees.
+    return next();
   }
 
   // Validate key format (should be UUID or similar unique string)
@@ -43,15 +53,7 @@ export function idempotencyMiddleware(req: Request, res: Response, next: NextFun
     .update(JSON.stringify(req.body))
     .digest("hex");
 
-  void checkAndHandleIdempotency(
-    idempotencyKey,
-    userId,
-    endpoint,
-    requestHash,
-    req,
-    res,
-    next
-  );
+  void checkAndHandleIdempotency(idempotencyKey, userId, endpoint, requestHash, res, next);
 }
 
 async function checkAndHandleIdempotency(
@@ -59,62 +61,41 @@ async function checkAndHandleIdempotency(
   userId: string,
   endpoint: string,
   requestHash: string,
-  req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    // Check if this exact request was already processed
-    const existing = await prisma.idempotencyKey.findUnique({
-      where: {
-        userId_endpoint_requestHash: {
-          userId,
-          endpoint,
-          requestHash,
-        },
-      },
-    });
-
-    if (existing) {
-      // Request already processed, return cached response
-      if (existing.response && existing.statusCode) {
-        return res.status(existing.statusCode).json(existing.response);
-      }
-      // Request is being processed (no response yet)
-      return res.status(409).json({
-        error: {
-          message: "Request is already being processed",
-        },
-      });
+    const now = Date.now();
+    // Cleanup opportunistically
+    for (const [k, v] of cache.entries()) {
+      if (v.expiresAt <= now) cache.delete(k);
     }
 
-    // Create idempotency record (marks request as "in progress")
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-    await prisma.idempotencyKey.create({
-      data: {
-        id: key,
-        userId,
-        endpoint,
-        requestHash,
-        expiresAt,
-      },
-    });
+    const dedupeKey = `${userId}:${endpoint}:${requestHash}`;
+    const existing = cache.get(dedupeKey);
+
+    if (existing) {
+      if (existing.inProgress) {
+        return res.status(409).json({ error: { message: "Request is already being processed" } });
+      }
+      if (typeof existing.statusCode === "number") {
+        return res.status(existing.statusCode).json(existing.response);
+      }
+    }
+
+    cache.set(dedupeKey, { inProgress: true, expiresAt: now + 24 * 60 * 60 * 1000 });
 
     // Intercept response to cache it
     const originalJson = res.json.bind(res);
     res.json = function (body: any) {
-      // Store the response in the database
-      void prisma.idempotencyKey
-        .update({
-          where: { id: key },
-          data: {
-            response: body,
-            statusCode: res.statusCode,
-          },
-        })
-        .catch((err) => {
-          console.error("Failed to cache idempotency response:", err);
-        });
+      const now = Date.now();
+      const dedupeKey = `${userId}:${endpoint}:${requestHash}`;
+      cache.set(dedupeKey, {
+        inProgress: false,
+        expiresAt: now + 24 * 60 * 60 * 1000,
+        statusCode: res.statusCode,
+        response: body,
+      });
 
       return originalJson(body);
     };
@@ -132,11 +113,8 @@ async function checkAndHandleIdempotency(
  * Should be called periodically (e.g., via cron job)
  */
 export async function cleanupExpiredIdempotencyKeys() {
-  await prisma.idempotencyKey.deleteMany({
-    where: {
-      expiresAt: {
-        lt: new Date(),
-      },
-    },
-  });
+  const now = Date.now();
+  for (const [k, v] of cache.entries()) {
+    if (v.expiresAt <= now) cache.delete(k);
+  }
 }

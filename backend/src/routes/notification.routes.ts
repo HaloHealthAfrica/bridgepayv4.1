@@ -10,3 +10,5 @@ notificationRouter.post("/read-all", requireAuth, asyncHandler(notificationContr
 notificationRouter.post("/:id/read", requireAuth, asyncHandler(notificationController.markRead));
 
 
+
+

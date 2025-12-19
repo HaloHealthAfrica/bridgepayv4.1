@@ -25,3 +25,5 @@ export const WalletCard = ({ balance, pending, escrow }: Props) => {
 };
 
 
+
+

@@ -47,7 +47,7 @@ function verifyMpesaSource(req: any, res: any, next: any) {
   });
 
   if (!isAllowed) {
-    console.warn(\`[SECURITY] M-Pesa callback from unauthorized IP: \${sourceIp}\`);
+    console.warn(`[SECURITY] M-Pesa callback from unauthorized IP: ${sourceIp}`);
     return res.status(403).json({ error: { message: "Forbidden" } });
   }
 

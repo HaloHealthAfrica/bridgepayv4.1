@@ -25,7 +25,7 @@ app.use(
   })
 );
 
-n// Global API rate limiting
+// Global API rate limiting
 app.use(apiRateLimiter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

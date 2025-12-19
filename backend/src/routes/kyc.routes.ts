@@ -15,3 +15,5 @@ kycRouter.get("/me", requireAuth, asyncHandler(kycController.getMyKyc));
 kycRouter.post("/submit", requireAuth, upload.array("files", 5), asyncHandler(kycController.submitKyc));
 
 
+
+

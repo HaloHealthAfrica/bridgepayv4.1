@@ -25,3 +25,5 @@ export function WalletHeroCard({ balance, pending, escrow }: Props) {
 }
 
 
+
+

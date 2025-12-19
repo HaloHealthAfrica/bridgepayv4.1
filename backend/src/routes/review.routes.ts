@@ -9,3 +9,5 @@ reviewRouter.post("/", requireAuth, asyncHandler(reviewController.createReview))
 reviewRouter.get("/:userId", requireAuth, asyncHandler(reviewController.getReviews));
 
 
+
+
