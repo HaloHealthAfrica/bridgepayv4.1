@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { apiRateLimiter } from "./middleware/rateLimiter";
 import { apiRouter } from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
@@ -24,11 +25,15 @@ app.use(
   })
 );
 
+n// Global API rate limiting
+app.use(apiRateLimiter);
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api", apiRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
+
 
 
