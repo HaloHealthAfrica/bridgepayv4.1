@@ -104,7 +104,6 @@ async function verifyDeployment() {
     console.log(`   ✅ IdempotencyKey table accessible (${count} records)`);
 
     // Verify unique constraint
-    const testKey = crypto.randomUUID();
     const testUser = "test-user";
     const testEndpoint = "/test";
     const testHash = "test-hash";
@@ -112,11 +111,11 @@ async function verifyDeployment() {
     try {
       await prisma.idempotencyKey.create({
         data: {
+          id: crypto.randomUUID(),
           userId: testUser,
           endpoint: testEndpoint,
           requestHash: testHash,
-          response: null,
-          statusCode: null,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       });
 
@@ -124,11 +123,11 @@ async function verifyDeployment() {
       try {
         await prisma.idempotencyKey.create({
           data: {
+            id: crypto.randomUUID(),
             userId: testUser,
             endpoint: testEndpoint,
             requestHash: testHash,
-            response: null,
-            statusCode: null,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
           },
         });
 

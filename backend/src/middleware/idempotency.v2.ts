@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { prisma } from "../lib/prisma";
 import { AppError } from "./errorHandler";
 
@@ -90,11 +90,8 @@ export async function idempotencyMiddleware(
     if (existingRequest) {
       // Request already processed or in progress
 
-      // Check if expired (24 hours)
-      const expiryTime = new Date(existingRequest.createdAt);
-      expiryTime.setHours(expiryTime.getHours() + 24);
-
-      if (new Date() > expiryTime) {
+      // Check if expired
+      if (new Date() > existingRequest.expiresAt) {
         // Expired - delete and allow retry
         await prisma.idempotencyKey.delete({
           where: {
@@ -109,8 +106,14 @@ export async function idempotencyMiddleware(
       } else {
         // Not expired - return cached response
         if (existingRequest.response && existingRequest.statusCode) {
+          const cached = existingRequest.response as unknown;
+          const cachedObj =
+            cached && typeof cached === "object" && !Array.isArray(cached)
+              ? (cached as Record<string, unknown>)
+              : { cachedResponse: cached };
+
           return res.status(existingRequest.statusCode).json({
-            ...existingRequest.response,
+            ...cachedObj,
             _idempotent: true,
             _originalRequestTime: existingRequest.createdAt,
           });
@@ -129,11 +132,11 @@ export async function idempotencyMiddleware(
     // Store new idempotency key (marks as in-progress)
     await prisma.idempotencyKey.create({
       data: {
+        id: randomUUID(),
         userId,
         endpoint,
         requestHash,
-        response: null,
-        statusCode: null,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
@@ -155,7 +158,7 @@ export async function idempotencyMiddleware(
             response: body,
           },
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           console.error("Failed to update idempotency record:", err);
         });
 
@@ -176,14 +179,11 @@ export async function idempotencyMiddleware(
  * @returns Number of deleted records
  */
 export async function cleanupExpiredIdempotencyKeys(): Promise<number> {
-  const expiryDate = new Date();
-  expiryDate.setHours(expiryDate.getHours() - 24);
+  const now = new Date();
 
   const result = await prisma.idempotencyKey.deleteMany({
     where: {
-      createdAt: {
-        lt: expiryDate,
-      },
+      expiresAt: { lt: now },
     },
   });
 

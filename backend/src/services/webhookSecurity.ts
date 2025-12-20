@@ -19,6 +19,7 @@ function ipInRange(ip: string, range: string): boolean {
   }
 
   const [subnet, bits] = range.split("/");
+  if (!subnet || !bits) return false;
   const mask = ~(2 ** (32 - parseInt(bits)) - 1);
 
   const ipNum = ipToNumber(ip);
@@ -36,8 +37,11 @@ function getSourceIp(req: Request): string {
 
   if (forwarded) {
     const forwardedArray = Array.isArray(forwarded) ? forwarded : [forwarded];
-    const sourceIp = forwardedArray[0].split(",")[0].trim();
-    return sourceIp;
+    const first = forwardedArray[0];
+    if (typeof first === "string" && first.length > 0) {
+      const sourceIp = first.split(",")[0]?.trim() || "";
+      if (sourceIp) return sourceIp;
+    }
   }
 
   return clientIp;
