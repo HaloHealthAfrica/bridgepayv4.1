@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
+import crypto from "crypto";
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import mpesaService from "../services/mpesa.service";
