@@ -9,6 +9,9 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // NOTE:
+    // - `DATABASE_URL` may be a Prisma Accelerate URL (e.g. `prisma+postgres://...`) which is not suitable for migrations.
+    // - For migrations/seeding, set `DIRECT_URL` to a real `postgresql://...` connection string.
+    url: process.env["DIRECT_URL"] || process.env["DATABASE_URL"],
   },
 });
