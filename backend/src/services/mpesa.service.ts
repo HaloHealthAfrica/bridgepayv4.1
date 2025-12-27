@@ -1,6 +1,8 @@
 import axios from "axios";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import platformLedger from "./platformLedger.service";
+import feeEngine from "./feeEngine.service";
 
 function normalizeKenyanPhone(phone: string) {
   const trimmed = phone.replace(/\s+/g, "");
@@ -80,6 +82,8 @@ class MpesaService {
 
     if (resultCode === 0) {
       const amount = transaction.amount;
+      const fee = transaction.fee ?? new Prisma.Decimal(0);
+      const net = amount.sub(fee);
       await prisma.$transaction(async (tx) => {
         // Ensure we only apply credit once (webhooks may be retried)
         const updated = await tx.transaction.updateMany({
@@ -94,15 +98,26 @@ class MpesaService {
         if (transaction.toUserId) {
           await tx.wallet.update({
             where: { userId: transaction.toUserId },
-            data: { balance: { increment: amount } },
+            data: { balance: { increment: net.lessThan(0) ? new Prisma.Decimal(0) : net } },
           });
+
+          if (fee.gt(0)) {
+            const w = await tx.wallet.findUnique({ where: { userId: transaction.toUserId } });
+            await platformLedger.creditFeeRevenue(tx, {
+              currency: w?.currency || "KES",
+              amount: fee,
+              transactionId: transaction.id,
+              reference: transaction.reference,
+              metadata: { flow: "WALLET_DEPOSIT", method: "MPESA_STK" },
+            });
+          }
 
           await tx.notification.create({
             data: {
               userId: transaction.toUserId,
               type: "PAYMENT",
               title: "Deposit Successful",
-              message: `KES ${amount} has been added to your wallet`,
+              message: `KES ${Number(net.lessThan(0) ? 0 : net)} has been added to your wallet`,
             },
           });
         }
@@ -195,19 +210,36 @@ class MpesaService {
           type: "DEPOSIT",
           status: "PENDING",
           metadata: { path: ["method"], equals: "paybill" },
-          amount: new Prisma.Decimal(transAmount),
         } as any,
         orderBy: { createdAt: "desc" },
       });
 
+      // Fee is computed on the actual callback amount (PSP-grade billing)
+      const feeQuote = await feeEngine.quote({
+        flow: "WALLET_DEPOSIT",
+        method: "PAYBILL",
+        currency: "KES",
+        amount: new Prisma.Decimal(transAmount),
+      });
+      const fee = feeQuote.fee;
       const creditAmount = new Prisma.Decimal(transAmount);
+      const netCredit = creditAmount.sub(fee);
+      if (netCredit.lte(0)) return;
 
       if (pending) {
         const updated = await tx.transaction.updateMany({
           where: { id: pending.id, status: "PENDING" },
           data: {
             status: "SUCCESS",
-            metadata: { ...(pending.metadata as any), mpesaC2B: payload, mpesaC2BTransId: transId },
+            amount: creditAmount,
+            fee,
+            reference: `C2B-${transId}`,
+            metadata: {
+              ...(pending.metadata as any),
+              mpesaC2B: payload,
+              mpesaC2BTransId: transId,
+              fee: { scheduleId: feeQuote.scheduleId, feePayer: feeQuote.feePayer, amount: Number(fee) },
+            },
           },
         });
         if (updated.count !== 1) return;
@@ -217,27 +249,42 @@ class MpesaService {
             toUserId: userId,
             fromUserId: null,
             amount: creditAmount,
-            fee: new Prisma.Decimal(0),
+            fee,
             type: "DEPOSIT",
             status: "SUCCESS",
             reference: `C2B-${transId}`,
             description: "Paybill deposit",
-            metadata: { method: "paybill", accountReference: billRef, mpesaC2B: payload },
+            metadata: {
+              method: "paybill",
+              accountReference: billRef,
+              mpesaC2B: payload,
+              fee: { scheduleId: feeQuote.scheduleId, feePayer: feeQuote.feePayer, amount: Number(fee) },
+            },
           },
         });
       }
 
       await tx.wallet.update({
         where: { userId },
-        data: { balance: { increment: creditAmount } },
+        data: { balance: { increment: netCredit } },
       });
+
+      if (fee.gt(0)) {
+        const w = await tx.wallet.findUnique({ where: { userId } });
+        await platformLedger.creditFeeRevenue(tx, {
+          currency: w?.currency || "KES",
+          amount: fee,
+          reference: `C2B-${transId}`,
+          metadata: { flow: "WALLET_DEPOSIT", method: "PAYBILL" },
+        });
+      }
 
       await tx.notification.create({
         data: {
           userId,
           type: "PAYMENT",
           title: "Paybill Deposit Received",
-          message: `KES ${transAmount} added to your wallet`,
+          message: `KES ${Number(netCredit)} added to your wallet`,
           actionUrl: "/wallet",
         },
       });
@@ -272,12 +319,43 @@ class MpesaService {
       });
       if (updated.count !== 1) return;
 
+      const wallet = txRow.fromUserId ? await tx.wallet.findUnique({ where: { userId: txRow.fromUserId } }) : null;
+      const currency = wallet?.currency || "KES";
+
+      if (mapped === "SUCCESS") {
+        // Clear payout principal from platform clearing (we already moved it there on initiation)
+        await platformLedger.debitPayoutClearing(tx, {
+          currency,
+          amount: txRow.amount,
+          transactionId: txRow.id,
+          reference: txRow.reference,
+          metadata: { provider: "mpesa", resultCode },
+        });
+      }
+
       if (mapped === "FAILED" && txRow.fromUserId) {
         const refundTotal = txRow.amount.plus(txRow.fee);
         await tx.wallet.update({
           where: { userId: txRow.fromUserId },
           data: { balance: { increment: refundTotal } },
         });
+
+        // Reverse platform postings (principal + fee)
+        await platformLedger.debitPayoutClearing(tx, {
+          currency,
+          amount: txRow.amount,
+          transactionId: txRow.id,
+          reference: txRow.reference,
+          metadata: { provider: "mpesa", resultCode, reason: "FAILED" },
+        });
+        await platformLedger.debitFeeRevenue(tx, {
+          currency,
+          amount: txRow.fee,
+          transactionId: txRow.id,
+          reference: txRow.reference,
+          metadata: { provider: "mpesa", resultCode, reason: "FAILED" },
+        });
+
         await tx.notification.create({
           data: {
             userId: txRow.fromUserId,

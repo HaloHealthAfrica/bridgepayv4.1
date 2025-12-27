@@ -5,6 +5,8 @@ import { AppError } from "../middleware/errorHandler";
 import QRCode from "qrcode";
 import crypto from "crypto";
 import lemonadeService from "../services/lemonade.service";
+import feeEngine from "../services/feeEngine.service";
+import platformLedger from "../services/platformLedger.service";
 
 function getCallbackBaseUrl() {
   return process.env.APP_URL || process.env.BACKEND_URL || "http://localhost:3000";
@@ -106,33 +108,57 @@ export async function processQRPayment(req: Request, res: Response) {
   const merchant = await prisma.user.findUnique({ where: { id: merchantId }, include: { merchantProfile: true } });
   if (!merchant || merchant.role !== "MERCHANT") throw new AppError("Invalid merchant", 404);
 
+  const quote = await feeEngine.quote({
+    flow: "MERCHANT_QR_PAY",
+    method: "QR_WALLET",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+
   const result = await prisma.$transaction(
     async (tx) => {
       const customerWallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
-      if (!customerWallet || Number(customerWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
+      if (!customerWallet) throw new AppError("Wallet not found", 404);
+
+      const amt = new Prisma.Decimal(amount);
+      const fee = quote.fee;
+      const debited = quote.feePayer === "SENDER" ? amt.add(fee) : amt;
+      const credited = quote.feePayer === "RECEIVER" ? amt.sub(fee) : amt;
+      if (credited.lte(0)) throw new AppError("Fee exceeds amount", 400);
+
+      if (customerWallet.balance.lt(debited)) throw new AppError("Insufficient balance", 400);
 
       await tx.wallet.update({
         where: { userId: req.user!.userId },
-        data: { balance: { decrement: new Prisma.Decimal(amount) } },
+        data: { balance: { decrement: debited } },
       });
 
       await tx.wallet.update({
         where: { userId: merchantId },
-        data: { balance: { increment: new Prisma.Decimal(amount) } },
+        data: { balance: { increment: credited } },
       });
 
       const transaction = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           toUserId: merchantId,
-          amount: new Prisma.Decimal(amount),
+          amount: amt,
+          fee,
           type: "PAYMENT",
           status: "SUCCESS",
           reference: `PAY-${crypto.randomUUID()}`,
           description: note || `Payment to ${merchant.merchantProfile?.businessName || merchant.name}`,
-          metadata: { method: "qr", merchantId },
+          metadata: { method: "qr", merchantId, fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: Number(fee) } },
         },
         include: { toUser: { select: { name: true, merchantProfile: true } } },
+      });
+
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: customerWallet.currency || "KES",
+        amount: fee,
+        transactionId: transaction.id,
+        reference: transaction.reference,
+        metadata: { flow: "MERCHANT_QR_PAY", method: "QR_WALLET", feePayer: quote.feePayer },
       });
 
       await tx.notification.create({
@@ -140,7 +166,7 @@ export async function processQRPayment(req: Request, res: Response) {
           userId: merchantId,
           type: "PAYMENT",
           title: "Payment Received",
-          message: `KES ${amount} received via QR code`,
+          message: `KES ${Number(credited)} received via QR code`,
           actionUrl: "/wallet",
         },
       });
@@ -172,16 +198,29 @@ export async function initiateCardPaymentToMerchant(req: Request, res: Response)
   const reference = `CARD-PAY-${crypto.randomUUID()}`;
   const resultUrl = `${getCallbackBaseUrl()}/api/callback/lemonade`;
 
+  const quote = await feeEngine.quote({
+    flow: "MERCHANT_CARD_PAY",
+    method: "CARD",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+
   const txRow = await prisma.transaction.create({
     data: {
       fromUserId: req.user!.userId,
       toUserId: merchantId,
       amount: new Prisma.Decimal(amount),
+      fee: quote.fee,
       type: "PAYMENT",
       status: "PENDING",
       reference,
       description: note || `Card payment to ${merchant.merchantProfile.businessName}`,
-      metadata: { method: "card", provider: "lemonade", merchantId },
+      metadata: {
+        method: "card",
+        provider: "lemonade",
+        merchantId,
+        fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: Number(quote.fee) },
+      },
     },
   });
 

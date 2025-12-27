@@ -5,6 +5,8 @@ import { AppError } from "../middleware/errorHandler";
 import { uploadFilesToS3 } from "../services/storage.service";
 import lemonadeService from "../services/lemonade.service";
 import crypto from "crypto";
+import feeEngine from "../services/feeEngine.service";
+import platformLedger from "../services/platformLedger.service";
 
 function getCallbackBaseUrl() {
   return process.env.APP_URL || process.env.BACKEND_URL || "http://localhost:3000";
@@ -259,15 +261,24 @@ export async function fundProject(req: Request, res: Response) {
   if (project.ownerId !== req.user!.userId) throw new AppError("Unauthorized", 403);
   if (!project.implementerId) throw new AppError("Assign implementer first", 400);
 
+  const quote = await feeEngine.quote({
+    flow: "PROJECT_FUND_WALLET",
+    method: "WALLET",
+    currency: "KES",
+    amount: project.budget,
+  });
+
   await prisma.$transaction(
     async (tx) => {
       const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
-      if (!wallet || Number(wallet.balance) < Number(project.budget)) throw new AppError("Insufficient balance", 400);
+      if (!wallet) throw new AppError("Wallet not found", 404);
+      const totalDebit = quote.feePayer === "SENDER" ? project.budget.add(quote.fee) : project.budget;
+      if (wallet.balance.lt(totalDebit)) throw new AppError("Insufficient balance", 400);
 
       await tx.wallet.update({
         where: { userId: req.user!.userId },
         data: {
-          balance: { decrement: project.budget },
+          balance: { decrement: totalDebit },
           escrowBalance: { increment: project.budget },
         },
       });
@@ -277,16 +288,25 @@ export async function fundProject(req: Request, res: Response) {
         data: { status: "ACTIVE", escrowBalance: project.budget, startDate: new Date() },
       });
 
-      await tx.transaction.create({
+      const txRow = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           amount: project.budget,
+          fee: quote.fee,
           type: "ESCROW_LOCK",
           status: "SUCCESS",
           reference: `ESC-LOCK-${crypto.randomUUID()}`,
           description: `Escrow lock for project: ${project.title}`,
-          metadata: { projectId: id },
+          metadata: { projectId: id, fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: Number(quote.fee) } },
         },
+      });
+
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: wallet.currency || "KES",
+        amount: quote.fee,
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "PROJECT_FUND_WALLET", method: "WALLET" },
       });
 
       await tx.notification.create({
@@ -330,16 +350,30 @@ export async function fundProjectCard(req: Request, res: Response) {
   const reference = `CARD-PROJ-${crypto.randomUUID()}`;
   const resultUrl = `${getCallbackBaseUrl()}/api/callback/lemonade`;
 
+  const quote = await feeEngine.quote({
+    flow: "PROJECT_FUND_CARD",
+    method: "CARD",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+
   const txRow = await prisma.transaction.create({
     data: {
       fromUserId: payer.id,
       toUserId: project.ownerId,
       amount: new Prisma.Decimal(amount),
+      fee: quote.fee,
       type: "ESCROW_LOCK",
       status: "PENDING",
       reference,
       description: `Project funding (card): ${project.title}`,
-      metadata: { projectId: project.id, method: "card", provider: "lemonade", kind: "project_funding" },
+      metadata: {
+        projectId: project.id,
+        method: "card",
+        provider: "lemonade",
+        kind: "project_funding",
+        fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: Number(quote.fee) },
+      },
     },
   });
 

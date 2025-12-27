@@ -151,3 +151,58 @@ export const projectSchemas = {
     amount: amountSchema.refine((val) => val >= 1, "Minimum funding amount is 1 KES"),
   }),
 };
+
+export const feeSchemas = {
+  createSchedule: z.object({
+    active: z.boolean().optional(),
+    name: z.string().min(1, "name is required").max(200),
+    flow: z.enum([
+      "WALLET_DEPOSIT",
+      "WALLET_WITHDRAWAL",
+      "WALLET_TRANSFER",
+      "WALLET_SEND_MPESA",
+      "MERCHANT_QR_PAY",
+      "MERCHANT_CARD_PAY",
+      "PROJECT_FUND_WALLET",
+      "PROJECT_FUND_CARD",
+    ]),
+    method: z.string().max(50).nullable().optional(),
+    currency: z.string().min(3).max(10).default("KES").optional(),
+    feePayer: z.enum(["SENDER", "RECEIVER"]).optional(),
+    bps: z.number().int().min(0).max(50_000).optional(),
+    flat: z.union([z.string(), z.number()]).transform((v) => Number(v)).optional(),
+    minFee: z.union([z.string(), z.number()]).transform((v) => Number(v)).optional(),
+    maxFee: z.union([z.string(), z.number()]).transform((v) => Number(v)).nullable().optional(),
+    metadata: z.any().optional(),
+  }),
+  updateSchedule: z.object({
+    active: z.boolean().optional(),
+    name: z.string().min(1).max(200).optional(),
+    flow: z
+      .enum([
+        "WALLET_DEPOSIT",
+        "WALLET_WITHDRAWAL",
+        "WALLET_TRANSFER",
+        "WALLET_SEND_MPESA",
+        "MERCHANT_QR_PAY",
+        "MERCHANT_CARD_PAY",
+        "PROJECT_FUND_WALLET",
+        "PROJECT_FUND_CARD",
+      ])
+      .optional(),
+    method: z.string().max(50).nullable().optional(),
+    currency: z.string().min(3).max(10).optional(),
+    feePayer: z.enum(["SENDER", "RECEIVER"]).optional(),
+    bps: z.number().int().min(0).max(50_000).optional(),
+    flat: z.union([z.string(), z.number()]).transform((v) => Number(v)).optional(),
+    minFee: z.union([z.string(), z.number()]).transform((v) => Number(v)).optional(),
+    maxFee: z.union([z.string(), z.number()]).transform((v) => Number(v)).nullable().optional(),
+    metadata: z.any().optional(),
+  }),
+  settleRevenue: z.object({
+    currency: z.string().min(3).max(10).default("KES").optional(),
+    amount: amountSchema,
+    reference: z.string().max(100).optional(),
+    note: z.string().max(500).optional(),
+  }),
+};

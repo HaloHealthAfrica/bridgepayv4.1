@@ -1,6 +1,8 @@
 import axios from "axios";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import platformLedger from "./platformLedger.service";
 
 type LemonadeAuthResponse = {
   status: "success" | "error";
@@ -168,6 +170,20 @@ class LemonadeService {
         });
         if (updated.count !== 1) return;
 
+        const fee = txRow.fee ?? new Prisma.Decimal(0);
+        const net = txRow.amount.sub(fee);
+        const netSafe = net.lessThan(0) ? new Prisma.Decimal(0) : net;
+
+        if (fee.gt(0)) {
+          await platformLedger.creditFeeRevenue(tx, {
+            currency: "KES",
+            amount: fee,
+            transactionId: txRow.id,
+            reference: txRow.reference,
+            metadata: { provider: "lemonade", type: txRow.type },
+          });
+        }
+
         // Project escrow funding: credit project escrow + owner's escrow wallet (so milestone releases don't go negative)
         if (txRow.type === "ESCROW_LOCK") {
           const projectId = (txRow.metadata as any)?.projectId as string | undefined;
@@ -176,15 +192,15 @@ class LemonadeService {
             if (project) {
               await tx.project.update({
                 where: { id: project.id },
-                data: { escrowBalance: { increment: txRow.amount } },
+                data: { escrowBalance: { increment: netSafe } },
               });
               await tx.wallet.update({
                 where: { userId: project.ownerId },
-                data: { escrowBalance: { increment: txRow.amount } },
+                data: { escrowBalance: { increment: netSafe } },
               });
 
               // If fully funded and implementer is assigned, activate project
-              const nextEscrow = Number(project.escrowBalance) + Number(txRow.amount);
+              const nextEscrow = Number(project.escrowBalance) + Number(netSafe);
               const budget = Number(project.budget);
               if (project.implementerId && nextEscrow >= budget && project.status === "ASSIGNED") {
                 await tx.project.update({
@@ -211,14 +227,14 @@ class LemonadeService {
         if (txRow.toUserId) {
           await tx.wallet.update({
             where: { userId: txRow.toUserId },
-            data: { balance: { increment: txRow.amount } },
+            data: { balance: { increment: netSafe } },
           });
           await tx.notification.create({
             data: {
               userId: txRow.toUserId,
               type: "PAYMENT",
               title: "Card Payment Successful",
-              message: `KES ${txRow.amount} received`,
+              message: `KES ${Number(netSafe)} received`,
               actionUrl: "/wallet",
             },
           });

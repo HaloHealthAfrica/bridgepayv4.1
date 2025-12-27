@@ -7,6 +7,8 @@ import mpesaService from "../services/mpesa.service";
 import lemonadeService from "../services/lemonade.service";
 import wapipayService from "../services/wapipay.service";
 import { generateReceipt } from "../services/receipt.service";
+import feeEngine from "../services/feeEngine.service";
+import platformLedger from "../services/platformLedger.service";
 
 export async function getBalance(req: Request, res: Response) {
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
@@ -65,16 +67,27 @@ export async function depositMpesa(req: Request, res: Response) {
   if (!phone) throw new AppError("Phone number required", 400);
 
   const reference = `MPESA-DEP-${crypto.randomUUID()}`;
+  const feeQuote = await feeEngine.quote({
+    flow: "WALLET_DEPOSIT",
+    method: "MPESA_STK",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
 
   const transaction = await prisma.transaction.create({
     data: {
       toUserId: req.user!.userId,
       amount: new Prisma.Decimal(amount),
+      fee: feeQuote.fee,
       type: "DEPOSIT",
       status: "PENDING",
       reference,
       description: `M-Pesa deposit from ${phone}`,
-      metadata: { phone, method: "mpesa" },
+      metadata: {
+        phone,
+        method: "mpesa",
+        fee: { scheduleId: feeQuote.scheduleId, feePayer: feeQuote.feePayer, amount: Number(feeQuote.fee) },
+      },
     },
   });
 
@@ -128,6 +141,14 @@ export async function depositCard(req: Request, res: Response) {
     data: {
       toUserId: req.user!.userId,
       amount: new Prisma.Decimal(amount),
+      fee: (
+        await feeEngine.quote({
+          flow: "WALLET_DEPOSIT",
+          method: "CARD",
+          currency: "KES",
+          amount: new Prisma.Decimal(amount),
+        })
+      ).fee,
       type: "DEPOSIT",
       status: "PENDING",
       reference,
@@ -236,32 +257,57 @@ export async function transfer(req: Request, res: Response) {
   const sender = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
   const senderName = sender?.name || "Someone";
 
+  const quote = await feeEngine.quote({
+    flow: "WALLET_TRANSFER",
+    method: "WALLET",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+
   const result = await prisma.$transaction(
     async (tx) => {
       // Check balance INSIDE transaction to prevent race conditions
       const senderWallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
-      if (!senderWallet || Number(senderWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
+      if (!senderWallet) throw new AppError("Wallet not found", 404);
+
+      const fee = quote.fee;
+      const amt = new Prisma.Decimal(amount);
+      const debited = quote.feePayer === "SENDER" ? amt.add(fee) : amt;
+      const credited = quote.feePayer === "RECEIVER" ? amt.sub(fee) : amt;
+      if (credited.lte(0)) throw new AppError("Fee exceeds amount", 400);
+
+      if (senderWallet.balance.lt(debited)) throw new AppError("Insufficient balance", 400);
 
       await tx.wallet.update({
         where: { userId: req.user!.userId },
-        data: { balance: { decrement: new Prisma.Decimal(amount) } },
+        data: { balance: { decrement: debited } },
       });
       await tx.wallet.update({
         where: { userId: recipient.id },
-        data: { balance: { increment: new Prisma.Decimal(amount) } },
+        data: { balance: { increment: credited } },
       });
 
       const txRow = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           toUserId: recipient.id,
-          amount: new Prisma.Decimal(amount),
+          amount: amt,
+          fee,
           type: "TRANSFER",
           status: "SUCCESS",
           reference: `TRF-${crypto.randomUUID()}`,
           description: note || "Transfer",
+          metadata: { fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: Number(fee) } },
         },
         include: { toUser: { select: { name: true, phone: true } } },
+      });
+
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: senderWallet.currency || "KES",
+        amount: fee,
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_TRANSFER", method: "WALLET", feePayer: quote.feePayer },
       });
 
       await tx.notification.create({
@@ -269,7 +315,7 @@ export async function transfer(req: Request, res: Response) {
           userId: recipient.id,
           type: "PAYMENT",
           title: "Money Received",
-          message: `You received KES ${amount} from ${senderName}`,
+          message: `You received KES ${Number(credited)} from ${senderName}`,
           actionUrl: "/wallet",
         },
       });
@@ -291,7 +337,13 @@ export async function withdrawMpesa(req: Request, res: Response) {
   if (!user) throw new AppError("User not found", 404);
   if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
 
-  const fee = Math.min(Number(amount) * 0.01, 50);
+  const quote = await feeEngine.quote({
+    flow: "WALLET_WITHDRAWAL",
+    method: "MPESA_B2C",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+  const fee = Number(quote.fee);
   const total = Number(amount) + fee;
 
   const created = await prisma.$transaction(
@@ -304,7 +356,7 @@ export async function withdrawMpesa(req: Request, res: Response) {
         data: { balance: { decrement: new Prisma.Decimal(total) } },
       });
 
-      return tx.transaction.create({
+      const txRow = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           amount: new Prisma.Decimal(amount),
@@ -313,9 +365,25 @@ export async function withdrawMpesa(req: Request, res: Response) {
           status: "PENDING",
           reference: `WD-${crypto.randomUUID()}`,
           description: `Withdrawal to ${phone}`,
-          metadata: { phone, method: "mpesa" },
+          metadata: { phone, method: "mpesa", fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: fee } },
         },
       });
+      // PSP accounting: move principal to payout clearing, fee to platform revenue (reversible on failure)
+      await platformLedger.creditPayoutClearing(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_WITHDRAWAL", method: "MPESA_B2C" },
+      });
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_WITHDRAWAL", method: "MPESA_B2C" },
+      });
+      return txRow;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
   );
@@ -340,6 +408,7 @@ export async function withdrawMpesa(req: Request, res: Response) {
     });
   } catch (error: any) {
     await prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
       await tx.wallet.update({
         where: { userId: req.user!.userId },
         data: { balance: { increment: new Prisma.Decimal(total) } },
@@ -348,6 +417,22 @@ export async function withdrawMpesa(req: Request, res: Response) {
       await tx.transaction.update({
         where: { id: created.id },
         data: { status: "FAILED", metadata: { ...(created.metadata as any), error: error?.message } },
+      });
+
+      // Reverse platform postings
+      await platformLedger.debitPayoutClearing(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
+      });
+      await platformLedger.debitFeeRevenue(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
       });
     });
 
@@ -366,7 +451,13 @@ export async function sendMpesa(req: Request, res: Response) {
   if (!user) throw new AppError("User not found", 404);
   if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
 
-  const fee = Math.min(Number(amount) * 0.01, 50);
+  const quote = await feeEngine.quote({
+    flow: "WALLET_SEND_MPESA",
+    method: "MPESA_B2C",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+  const fee = Number(quote.fee);
   const total = Number(amount) + fee;
 
   const created = await prisma.$transaction(
@@ -379,7 +470,7 @@ export async function sendMpesa(req: Request, res: Response) {
         data: { balance: { decrement: new Prisma.Decimal(total) } },
       });
 
-      return tx.transaction.create({
+      const txRow = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           amount: new Prisma.Decimal(amount),
@@ -388,9 +479,29 @@ export async function sendMpesa(req: Request, res: Response) {
           status: "PENDING",
           reference: `MPESA-SEND-${crypto.randomUUID()}`,
           description: note || `M-Pesa send to ${phone}`,
-          metadata: { phone, method: "mpesa_b2c", kind: "send_money" },
+          metadata: {
+            phone,
+            method: "mpesa_b2c",
+            kind: "send_money",
+            fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: fee },
+          },
         },
       });
+      await platformLedger.creditPayoutClearing(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_SEND_MPESA", method: "MPESA_B2C" },
+      });
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_SEND_MPESA", method: "MPESA_B2C" },
+      });
+      return txRow;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
   );
@@ -415,6 +526,7 @@ export async function sendMpesa(req: Request, res: Response) {
     });
   } catch (error: any) {
     await prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
       await tx.wallet.update({
         where: { userId: req.user!.userId },
         data: { balance: { increment: new Prisma.Decimal(total) } },
@@ -423,6 +535,21 @@ export async function sendMpesa(req: Request, res: Response) {
       await tx.transaction.update({
         where: { id: created.id },
         data: { status: "FAILED", metadata: { ...(created.metadata as any), error: error?.message } },
+      });
+
+      await platformLedger.debitPayoutClearing(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
+      });
+      await platformLedger.debitFeeRevenue(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
       });
     });
 
@@ -440,8 +567,13 @@ export async function withdrawBank(req: Request, res: Response) {
   if (!user) throw new AppError("User not found", 404);
   if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
 
-  // Basic fee policy (can be adjusted later)
-  const fee = Math.min(Math.max(Number(amount) * 0.01, 20), 200); // 1% (min 20, max 200)
+  const quote = await feeEngine.quote({
+    flow: "WALLET_WITHDRAWAL",
+    method: "BANK_A2P",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
+  const fee = Number(quote.fee);
   const total = Number(amount) + fee;
 
   const created = await prisma.$transaction(
@@ -454,7 +586,7 @@ export async function withdrawBank(req: Request, res: Response) {
         data: { balance: { decrement: new Prisma.Decimal(total) } },
       });
 
-      return tx.transaction.create({
+      const txRow = await tx.transaction.create({
         data: {
           fromUserId: req.user!.userId,
           amount: new Prisma.Decimal(amount),
@@ -463,9 +595,31 @@ export async function withdrawBank(req: Request, res: Response) {
           status: "PENDING",
           reference: `BANK-${crypto.randomUUID()}`,
           description: note || `Bank transfer to ${accountName}`,
-          metadata: { method: "bank", bankCode, accountNumber, accountName, provider: "wapipay" },
+          metadata: {
+            method: "bank",
+            bankCode,
+            accountNumber,
+            accountName,
+            provider: "wapipay",
+            fee: { scheduleId: quote.scheduleId, feePayer: quote.feePayer, amount: fee },
+          },
         },
       });
+      await platformLedger.creditPayoutClearing(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_WITHDRAWAL", method: "BANK_A2P" },
+      });
+      await platformLedger.creditFeeRevenue(tx, {
+        currency: wallet.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: txRow.id,
+        reference: txRow.reference,
+        metadata: { flow: "WALLET_WITHDRAWAL", method: "BANK_A2P" },
+      });
+      return txRow;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
   );
@@ -495,6 +649,7 @@ export async function withdrawBank(req: Request, res: Response) {
   } catch (e: any) {
     // refund on failure to initiate
     await prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
       await tx.wallet.update({
         where: { userId: req.user!.userId },
         data: { balance: { increment: new Prisma.Decimal(total) } },
@@ -502,6 +657,21 @@ export async function withdrawBank(req: Request, res: Response) {
       await tx.transaction.update({
         where: { id: created.id },
         data: { status: "FAILED", metadata: { ...(created.metadata as any), error: e?.message } },
+      });
+
+      await platformLedger.debitPayoutClearing(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(amount),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
+      });
+      await platformLedger.debitFeeRevenue(tx, {
+        currency: wallet?.currency || "KES",
+        amount: new Prisma.Decimal(fee),
+        transactionId: created.id,
+        reference: created.reference,
+        metadata: { reason: "INIT_FAILED" },
       });
     });
 
@@ -519,16 +689,28 @@ export async function depositPaybill(req: Request, res: Response) {
 
   // Use a stable account reference so C2B confirmation can credit the right wallet
   const accountReference = `BR-${req.user!.userId}`;
+  const feeQuote = await feeEngine.quote({
+    flow: "WALLET_DEPOSIT",
+    method: "PAYBILL",
+    currency: "KES",
+    amount: new Prisma.Decimal(amount),
+  });
 
   const txRow = await prisma.transaction.create({
     data: {
       toUserId: req.user!.userId,
       amount: new Prisma.Decimal(amount),
+      fee: feeQuote.fee,
       type: "DEPOSIT",
       status: "PENDING",
       reference: `PAYBILL-DEP-${crypto.randomUUID()}`,
       description: "Paybill deposit",
-      metadata: { method: "paybill", paybill, accountReference },
+      metadata: {
+        method: "paybill",
+        paybill,
+        accountReference,
+        fee: { scheduleId: feeQuote.scheduleId, feePayer: feeQuote.feePayer, amount: Number(feeQuote.fee) },
+      },
     },
   });
 
