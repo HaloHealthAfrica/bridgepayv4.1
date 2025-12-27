@@ -53,6 +53,12 @@ export async function getProjects(req: Request, res: Response) {
 
   if (role === "owner") where.ownerId = req.user!.userId;
   else if (role === "implementer") where.implementerId = req.user!.userId;
+  else if (role === "verifier") {
+    if (req.user?.role !== "PROJECT_VERIFIER") throw new AppError("Forbidden", 403);
+    // Show projects with at least one milestone awaiting review.
+    where.status = { in: ["ASSIGNED", "ACTIVE"] };
+    where.milestones = { some: { status: { in: ["SUBMITTED", "IN_REVIEW"] } } };
+  }
   else if (role === "browse") {
     where.status = "OPEN";
     where.implementerId = null;
@@ -402,6 +408,24 @@ export async function submitEvidence(req: Request, res: Response) {
   const { description, links } = req.body ?? {};
   const files = (req.files as Express.Multer.File[]) || [];
 
+  const normalizedLinks = (() => {
+    if (!links) return [];
+    if (Array.isArray(links)) return links;
+    if (typeof links === "string") {
+      try {
+        const parsed = JSON.parse(links);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Fallback: comma/newline separated
+        return links
+          .split(/[\n,]/g)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+    return [];
+  })();
+
   const milestone = await prisma.milestone.findUnique({ where: { id: milestoneId }, include: { project: true } });
   if (!milestone) throw new AppError("Milestone not found", 404);
   if (milestone.project.implementerId !== req.user!.userId) throw new AppError("Unauthorized", 403);
@@ -417,7 +441,7 @@ export async function submitEvidence(req: Request, res: Response) {
       where: { id: milestoneId },
       data: {
         status: "SUBMITTED",
-        evidence: { files: fileUrls, links: links || [], description },
+        evidence: { files: fileUrls, links: normalizedLinks, description },
         submittedAt: new Date(),
       },
     });

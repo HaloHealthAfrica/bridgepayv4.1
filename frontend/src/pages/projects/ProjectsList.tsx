@@ -10,8 +10,8 @@ type RoleMode = "project-owner" | "implementer" | "verifier" | "funder";
 
 function roleModeToQuery(mode: RoleMode): string | undefined {
   if (mode === "project-owner") return "owner";
-  if (mode === "implementer") return "browse";
-  if (mode === "verifier") return undefined;
+  if (mode === "implementer") return "implementer";
+  if (mode === "verifier") return "verifier";
   if (mode === "funder") return "browse";
   return undefined;
 }

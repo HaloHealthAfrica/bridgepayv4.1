@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { DollarSign, Plus, Settings, Shield } from "lucide-react";
+import { DollarSign, Plus, Settings, Shield, Upload, Link2 } from "lucide-react";
 import { projectAPI } from "../../services/api";
 import { useAuthStore } from "../../store/auth.store";
 import { PrimaryButton, SecondaryButton } from "../../components/ui/Buttons";
 import { ProjectStatusPill } from "../../components/projects/ProjectStatusPill";
 import { ProgressBar } from "../../components/projects/ProgressBar";
 import { MilestoneCard } from "../../components/projects/MilestoneCard";
+import { Modal } from "../../components/ui/Modal";
 
 function formatKES(n: number) {
   return `KES ${n.toLocaleString()}`;
@@ -20,6 +21,13 @@ export function ProjectDetail() {
   const [project, setProject] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [evidence, setEvidence] = useState<any | null>(null);
+
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceMilestone, setEvidenceMilestone] = useState<any | null>(null);
+  const [evidenceDesc, setEvidenceDesc] = useState("");
+  const [evidenceLinks, setEvidenceLinks] = useState("");
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [submittingEvidence, setSubmittingEvidence] = useState(false);
   const [cardFundingTxn, setCardFundingTxn] = useState<string>(() =>
     id ? localStorage.getItem(`bridge_project_card_fund_${id}`) || "" : ""
   );
@@ -28,6 +36,7 @@ export function ProjectDetail() {
 
   const isOwner = project?.ownerId && user?.id ? project.ownerId === user.id : false;
   const canVerify = user?.role === "PROJECT_VERIFIER" || isOwner;
+  const isImplementer = user?.id && project?.implementerId ? user.id === project.implementerId : false;
 
   useEffect(() => {
     if (!id) return;
@@ -244,6 +253,24 @@ export function ProjectDetail() {
             key={m.id}
             milestone={m}
             showActions={canVerify}
+            extraActions={
+              isImplementer && (m.status === "PENDING" || m.status === "IN_PROGRESS") ? (
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <SecondaryButton
+                    icon={Upload}
+                    onClick={() => {
+                      setEvidenceMilestone(m);
+                      setEvidenceDesc("");
+                      setEvidenceLinks("");
+                      setEvidenceFiles([]);
+                      setEvidenceOpen(true);
+                    }}
+                  >
+                    Submit Evidence
+                  </SecondaryButton>
+                </div>
+              ) : null
+            }
             onApprove={async (milestone) => {
               const notes = prompt("Approval notes (optional)") || undefined;
               try {
@@ -271,6 +298,91 @@ export function ProjectDetail() {
           />
         ))}
       </div>
+
+      {/* Implementer evidence submission */}
+      <Modal
+        open={evidenceOpen}
+        title={evidenceMilestone ? `Submit Evidence: ${evidenceMilestone.title}` : "Submit Evidence"}
+        onClose={() => setEvidenceOpen(false)}
+        maxWidthClass="max-w-2xl"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block mb-2 font-semibold">Description</label>
+            <textarea
+              className="w-full p-4 border-2 border-gray-200 rounded-button bg-surface"
+              rows={3}
+              value={evidenceDesc}
+              onChange={(e) => setEvidenceDesc(e.target.value)}
+              placeholder="What did you deliver? What should the verifier check?"
+            />
+          </div>
+
+          <div>
+            <label className="block mb-2 font-semibold flex items-center gap-2">
+              <Link2 size={18} className="text-primary" /> Links (optional)
+            </label>
+            <textarea
+              className="w-full p-4 border-2 border-gray-200 rounded-button bg-surface"
+              rows={2}
+              value={evidenceLinks}
+              onChange={(e) => setEvidenceLinks(e.target.value)}
+              placeholder="Paste links (one per line). e.g. Figma, GitHub, Drive, live demo URL"
+            />
+          </div>
+
+          <div>
+            <label className="block mb-2 font-semibold">Files (optional)</label>
+            <input
+              type="file"
+              multiple
+              className="block w-full"
+              onChange={(e) => setEvidenceFiles(Array.from(e.target.files || []))}
+            />
+            <div className="text-xs text-text-secondary mt-2">
+              {evidenceFiles.length ? `${evidenceFiles.length} file(s) selected` : "No files selected"}
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <SecondaryButton fullWidth onClick={() => setEvidenceOpen(false)} disabled={submittingEvidence}>
+              Cancel
+            </SecondaryButton>
+            <PrimaryButton
+              fullWidth
+              icon={Upload}
+              disabled={submittingEvidence || !id || !evidenceMilestone}
+              onClick={async () => {
+                if (!id || !evidenceMilestone) return;
+                setSubmittingEvidence(true);
+                try {
+                  const links = evidenceLinks
+                    .split("\n")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+
+                  await projectAPI.submitEvidence(id, evidenceMilestone.id, {
+                    description: evidenceDesc || undefined,
+                    links: links.length ? links : undefined,
+                    files: evidenceFiles.length ? evidenceFiles : undefined,
+                  });
+
+                  const res = await projectAPI.getProjectById(id);
+                  setProject(res.data.data.project);
+                  setEvidenceOpen(false);
+                  alert("Evidence submitted. Awaiting review.");
+                } catch (e: any) {
+                  alert(e?.response?.data?.error?.message || "Failed to submit evidence");
+                } finally {
+                  setSubmittingEvidence(false);
+                }
+              }}
+            >
+              {submittingEvidence ? "Submitting..." : "Submit Evidence"}
+            </PrimaryButton>
+          </div>
+        </div>
+      </Modal>
 
       {/* Evidence viewer */}
       {evidence ? (

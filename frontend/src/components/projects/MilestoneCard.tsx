@@ -7,6 +7,7 @@ type Props = {
   onApprove?: (milestone: any) => void;
   onReject?: (milestone: any) => void;
   onViewEvidence?: (milestone: any) => void;
+  extraActions?: React.ReactNode;
 };
 
 function mapMilestoneStatusToUi(status: string) {
@@ -18,7 +19,7 @@ function mapMilestoneStatusToUi(status: string) {
   return { ui: "PENDING", icon: Target, bg: "bg-primary-light", color: "text-text-secondary" };
 }
 
-export function MilestoneCard({ milestone, showActions, onApprove, onReject, onViewEvidence }: Props) {
+export function MilestoneCard({ milestone, showActions, onApprove, onReject, onViewEvidence, extraActions }: Props) {
   const mapped = mapMilestoneStatusToUi(milestone.status);
   const Icon = mapped.icon;
 
@@ -92,6 +93,8 @@ export function MilestoneCard({ milestone, showActions, onApprove, onReject, onV
               </button>
             </div>
           ) : null}
+
+          {extraActions ? <div className="mt-2">{extraActions}</div> : null}
         </div>
       </div>
     </div>

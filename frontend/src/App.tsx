@@ -24,6 +24,7 @@ import { MerchantDashboard } from "./pages/merchant/MerchantDashboard";
 import { MerchantPay } from "./pages/pay/MerchantPay";
 import { Landing } from "./pages/Landing";
 import { LegalPage } from "./pages/Legal";
+import { KycVerifierConsole } from "./pages/kyc/KycVerifierConsole";
 
 export function App() {
   const bootstrap = useAuthStore((s) => s.bootstrap);
@@ -64,6 +65,11 @@ export function App() {
                 {user.role === "ADMIN" ? (
                   <Link to="/admin" className="hover:text-primary">
                     Admin
+                  </Link>
+                ) : null}
+                {user.role === "KYC_VERIFIER" ? (
+                  <Link to="/kyc-verifier" className="hover:text-primary">
+                    KYC Review
                   </Link>
                 ) : null}
                 {user.role === "MERCHANT" ? (
@@ -260,6 +266,15 @@ export function App() {
             element={
               <RoleRoute roles={["ADMIN"]}>
                 <AdminConsole />
+              </RoleRoute>
+            }
+          />
+
+          <Route
+            path="/kyc-verifier"
+            element={
+              <RoleRoute roles={["KYC_VERIFIER", "ADMIN"]}>
+                <KycVerifierConsole />
               </RoleRoute>
             }
           />

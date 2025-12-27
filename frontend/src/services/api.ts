@@ -59,6 +59,15 @@ export const projectAPI = {
     http.post(`/projects/${projectId}/milestones/${milestoneId}/approve`, { notes }),
   rejectMilestone: (projectId: string, milestoneId: string, reason?: string) =>
     http.post(`/projects/${projectId}/milestones/${milestoneId}/reject`, { reason }),
+  submitEvidence: (projectId: string, milestoneId: string, body: { description?: string; links?: string[]; files?: File[] }) => {
+    const fd = new FormData();
+    if (body.description) fd.append("description", body.description);
+    if (body.links && body.links.length) fd.append("links", JSON.stringify(body.links));
+    (body.files || []).forEach((f) => fd.append("files", f));
+    return http.post(`/projects/${projectId}/milestones/${milestoneId}/evidence`, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
 };
 
 export const notificationAPI = {
