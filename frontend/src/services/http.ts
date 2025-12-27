@@ -31,18 +31,25 @@ http.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Add idempotency key for payment endpoints
-    const paymentEndpoints = [
-      "/wallet/deposit/mpesa",
-      "/wallet/deposit/card",
-      "/wallet/transfer",
-      "/wallet/withdraw/mpesa",
-      "/merchant/qr/pay",
-      "/merchant/card/pay",
-    ];
+    // Add idempotency key for payment endpoints (required by backend middleware).
+    // If caller already set it, don't overwrite.
+    const method = String(config.method || "").toLowerCase();
+    const url = String(config.url || "");
+    const hasKey = !!config.headers?.["Idempotency-Key"] || !!config.headers?.["idempotency-key"];
 
-    if (paymentEndpoints.some((endpoint) => config.url?.includes(endpoint)) && config.method === "post") {
-      // Generate unique idempotency key
+    const isPayment =
+      url.includes("/wallet/deposit/mpesa") ||
+      url.includes("/wallet/deposit/card") ||
+      url.includes("/wallet/deposit/paybill") ||
+      url.includes("/wallet/transfer") ||
+      url.includes("/wallet/withdraw/mpesa") ||
+      url.includes("/wallet/withdraw/bank") ||
+      url.includes("/wallet/send/mpesa") ||
+      url.includes("/merchant/qr/pay") ||
+      url.includes("/merchant/card/pay") ||
+      /\/projects\/[^/]+\/fund(\/card)?$/.test(url);
+
+    if (!hasKey && isPayment && method === "post") {
       config.headers["Idempotency-Key"] = crypto.randomUUID();
     }
 

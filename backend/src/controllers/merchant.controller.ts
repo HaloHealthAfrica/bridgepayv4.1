@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import QRCode from "qrcode";
+import crypto from "crypto";
 import lemonadeService from "../services/lemonade.service";
 
 function getCallbackBaseUrl() {
@@ -102,49 +103,52 @@ export async function processQRPayment(req: Request, res: Response) {
   if (!merchantId) throw new AppError("merchantId required", 400);
   if (!amount || Number(amount) < 1) throw new AppError("Invalid amount", 400);
 
-  const customerWallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!customerWallet || Number(customerWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
-
   const merchant = await prisma.user.findUnique({ where: { id: merchantId }, include: { merchantProfile: true } });
   if (!merchant || merchant.role !== "MERCHANT") throw new AppError("Invalid merchant", 404);
 
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: { balance: { decrement: new Prisma.Decimal(amount) } },
-    });
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const customerWallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!customerWallet || Number(customerWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
 
-    await tx.wallet.update({
-      where: { userId: merchantId },
-      data: { balance: { increment: new Prisma.Decimal(amount) } },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { decrement: new Prisma.Decimal(amount) } },
+      });
 
-    const transaction = await tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        toUserId: merchantId,
-        amount: new Prisma.Decimal(amount),
-        type: "PAYMENT",
-        status: "SUCCESS",
-        reference: `PAY-${Date.now()}`,
-        description: note || `Payment to ${merchant.merchantProfile?.businessName || merchant.name}`,
-        metadata: { method: "qr", merchantId },
-      },
-      include: { toUser: { select: { name: true, merchantProfile: true } } },
-    });
+      await tx.wallet.update({
+        where: { userId: merchantId },
+        data: { balance: { increment: new Prisma.Decimal(amount) } },
+      });
 
-    await tx.notification.create({
-      data: {
-        userId: merchantId,
-        type: "PAYMENT",
-        title: "Payment Received",
-        message: `KES ${amount} received via QR code`,
-        actionUrl: "/wallet",
-      },
-    });
+      const transaction = await tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          toUserId: merchantId,
+          amount: new Prisma.Decimal(amount),
+          type: "PAYMENT",
+          status: "SUCCESS",
+          reference: `PAY-${crypto.randomUUID()}`,
+          description: note || `Payment to ${merchant.merchantProfile?.businessName || merchant.name}`,
+          metadata: { method: "qr", merchantId },
+        },
+        include: { toUser: { select: { name: true, merchantProfile: true } } },
+      });
 
-    return transaction;
-  });
+      await tx.notification.create({
+        data: {
+          userId: merchantId,
+          type: "PAYMENT",
+          title: "Payment Received",
+          message: `KES ${amount} received via QR code`,
+          actionUrl: "/wallet",
+        },
+      });
+
+      return transaction;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   res.json({ success: true, data: { transaction: result } });
 }
@@ -165,7 +169,7 @@ export async function initiateCardPaymentToMerchant(req: Request, res: Response)
   const walletNo = process.env.LEMONADE_WALLET_NO || "";
   if (!walletNo) throw new AppError("Card payments not configured (LEMONADE_WALLET_NO missing)", 500);
 
-  const reference = `CARD-PAY-${Date.now()}`;
+  const reference = `CARD-PAY-${crypto.randomUUID()}`;
   const resultUrl = `${getCallbackBaseUrl()}/api/callback/lemonade`;
 
   const txRow = await prisma.transaction.create({

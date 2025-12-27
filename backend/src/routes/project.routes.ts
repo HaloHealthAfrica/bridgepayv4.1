@@ -20,7 +20,13 @@ projectRouter.get("/:id", requireAuth, asyncHandler(projectController.getProject
 projectRouter.post("/:id/publish", requireAuth, asyncHandler(projectController.publishProject));
 projectRouter.post("/:id/apply", requireAuth, asyncHandler(projectController.applyToProject));
 projectRouter.post("/:id/assign", requireAuth, asyncHandler(projectController.assignImplementer));
-projectRouter.post("/:id/fund", requireAuth, asyncHandler(projectController.fundProject));
+projectRouter.post(
+  "/:id/fund",
+  requireAuth,
+  paymentRateLimiter,
+  idempotencyMiddleware,
+  asyncHandler(projectController.fundProject)
+);
 projectRouter.post(
   "/:id/fund/card",
   requireAuth,

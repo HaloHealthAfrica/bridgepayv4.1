@@ -64,7 +64,7 @@ export async function depositMpesa(req: Request, res: Response) {
   if (!amount || Number(amount) < 1) throw new AppError("Minimum deposit is KES 1", 400);
   if (!phone) throw new AppError("Phone number required", 400);
 
-  const reference = `MPESA-DEP-${Date.now()}`;
+  const reference = `MPESA-DEP-${crypto.randomUUID()}`;
 
   const transaction = await prisma.transaction.create({
     data: {
@@ -118,7 +118,7 @@ export async function depositCard(req: Request, res: Response) {
   const { amount } = req.body ?? {};
   if (!amount || Number(amount) < 1) throw new AppError("Minimum deposit is KES 1", 400);
 
-  const reference = `CARD-DEP-${Date.now()}`;
+  const reference = `CARD-DEP-${crypto.randomUUID()}`;
   const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
   const resultUrl = `${process.env.APP_URL || process.env.BACKEND_URL || "http://localhost:3000"}/api/callback/lemonade`;
   const walletNo = process.env.LEMONADE_WALLET_NO || "";
@@ -233,47 +233,51 @@ export async function transfer(req: Request, res: Response) {
   if (recipient.status !== "ACTIVE") throw new AppError("Recipient account is not active", 400);
   if (recipient.id === req.user!.userId) throw new AppError("Cannot transfer to yourself", 400);
 
-  const senderWallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!senderWallet || Number(senderWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
-
   const sender = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
   const senderName = sender?.name || "Someone";
 
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: { balance: { decrement: new Prisma.Decimal(amount) } },
-    });
-    await tx.wallet.update({
-      where: { userId: recipient.id },
-      data: { balance: { increment: new Prisma.Decimal(amount) } },
-    });
+  const result = await prisma.$transaction(
+    async (tx) => {
+      // Check balance INSIDE transaction to prevent race conditions
+      const senderWallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!senderWallet || Number(senderWallet.balance) < Number(amount)) throw new AppError("Insufficient balance", 400);
 
-    const txRow = await tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        toUserId: recipient.id,
-        amount: new Prisma.Decimal(amount),
-        type: "TRANSFER",
-        status: "SUCCESS",
-        reference: `TRF-${Date.now()}`,
-        description: note || "Transfer",
-      },
-      include: { toUser: { select: { name: true, phone: true } } },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { decrement: new Prisma.Decimal(amount) } },
+      });
+      await tx.wallet.update({
+        where: { userId: recipient.id },
+        data: { balance: { increment: new Prisma.Decimal(amount) } },
+      });
 
-    await tx.notification.create({
-      data: {
-        userId: recipient.id,
-        type: "PAYMENT",
-        title: "Money Received",
-        message: `You received KES ${amount} from ${senderName}`,
-        actionUrl: "/wallet",
-      },
-    });
+      const txRow = await tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          toUserId: recipient.id,
+          amount: new Prisma.Decimal(amount),
+          type: "TRANSFER",
+          status: "SUCCESS",
+          reference: `TRF-${crypto.randomUUID()}`,
+          description: note || "Transfer",
+        },
+        include: { toUser: { select: { name: true, phone: true } } },
+      });
 
-    return txRow;
-  });
+      await tx.notification.create({
+        data: {
+          userId: recipient.id,
+          type: "PAYMENT",
+          title: "Money Received",
+          message: `You received KES ${amount} from ${senderName}`,
+          actionUrl: "/wallet",
+        },
+      });
+
+      return txRow;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   res.json({ success: true, data: { transaction: result } });
 }
@@ -283,31 +287,38 @@ export async function withdrawMpesa(req: Request, res: Response) {
   if (!amount || Number(amount) < 10) throw new AppError("Minimum withdrawal is KES 10", 400);
   if (!phone) throw new AppError("Phone number required", 400);
 
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { kycStatus: true } });
+  if (!user) throw new AppError("User not found", 404);
+  if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
+
   const fee = Math.min(Number(amount) * 0.01, 50);
   const total = Number(amount) + fee;
 
-  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
+  const created = await prisma.$transaction(
+    async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
 
-  const created = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: { balance: { decrement: new Prisma.Decimal(total) } },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { decrement: new Prisma.Decimal(total) } },
+      });
 
-    return tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        amount: new Prisma.Decimal(amount),
-        fee: new Prisma.Decimal(fee),
-        type: "WITHDRAWAL",
-        status: "PENDING",
-        reference: `WD-${Date.now()}`,
-        description: `Withdrawal to ${phone}`,
-        metadata: { phone, method: "mpesa" },
-      },
-    });
-  });
+      return tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          amount: new Prisma.Decimal(amount),
+          fee: new Prisma.Decimal(fee),
+          type: "WITHDRAWAL",
+          status: "PENDING",
+          reference: `WD-${crypto.randomUUID()}`,
+          description: `Withdrawal to ${phone}`,
+          metadata: { phone, method: "mpesa" },
+        },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   try {
     const b2cResponse = await mpesaService.withdrawToMpesa(String(phone), Number(amount), "Bridge Withdrawal");
@@ -351,31 +362,38 @@ export async function sendMpesa(req: Request, res: Response) {
   if (!amount || Number(amount) < 10) throw new AppError("Minimum send is KES 10", 400);
   if (!phone) throw new AppError("Phone number required", 400);
 
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { kycStatus: true } });
+  if (!user) throw new AppError("User not found", 404);
+  if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
+
   const fee = Math.min(Number(amount) * 0.01, 50);
   const total = Number(amount) + fee;
 
-  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
+  const created = await prisma.$transaction(
+    async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
 
-  const created = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: { balance: { decrement: new Prisma.Decimal(total) } },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { decrement: new Prisma.Decimal(total) } },
+      });
 
-    return tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        amount: new Prisma.Decimal(amount),
-        fee: new Prisma.Decimal(fee),
-        type: "WITHDRAWAL",
-        status: "PENDING",
-        reference: `MPESA-SEND-${Date.now()}`,
-        description: note || `M-Pesa send to ${phone}`,
-        metadata: { phone, method: "mpesa_b2c", kind: "send_money" },
-      },
-    });
-  });
+      return tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          amount: new Prisma.Decimal(amount),
+          fee: new Prisma.Decimal(fee),
+          type: "WITHDRAWAL",
+          status: "PENDING",
+          reference: `MPESA-SEND-${crypto.randomUUID()}`,
+          description: note || `M-Pesa send to ${phone}`,
+          metadata: { phone, method: "mpesa_b2c", kind: "send_money" },
+        },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   try {
     const b2cResponse = await mpesaService.withdrawToMpesa(String(phone), Number(amount), "Bridge Send Money");
@@ -418,32 +436,39 @@ export async function withdrawBank(req: Request, res: Response) {
   if (!amount || Number(amount) < 50) throw new AppError("Minimum bank transfer is KES 50", 400);
   if (!bankCode || !accountNumber || !accountName) throw new AppError("Bank details required", 400);
 
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { kycStatus: true } });
+  if (!user) throw new AppError("User not found", 404);
+  if (user.kycStatus !== "VERIFIED") throw new AppError("KYC verification is required for withdrawals", 403);
+
   // Basic fee policy (can be adjusted later)
   const fee = Math.min(Math.max(Number(amount) * 0.01, 20), 200); // 1% (min 20, max 200)
   const total = Number(amount) + fee;
 
-  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
+  const created = await prisma.$transaction(
+    async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!wallet || Number(wallet.balance) < total) throw new AppError("Insufficient balance", 400);
 
-  const created = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: { balance: { decrement: new Prisma.Decimal(total) } },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: { balance: { decrement: new Prisma.Decimal(total) } },
+      });
 
-    return tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        amount: new Prisma.Decimal(amount),
-        fee: new Prisma.Decimal(fee),
-        type: "WITHDRAWAL",
-        status: "PENDING",
-        reference: `BANK-${Date.now()}`,
-        description: note || `Bank transfer to ${accountName}`,
-        metadata: { method: "bank", bankCode, accountNumber, accountName, provider: "wapipay" },
-      },
-    });
-  });
+      return tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          amount: new Prisma.Decimal(amount),
+          fee: new Prisma.Decimal(fee),
+          type: "WITHDRAWAL",
+          status: "PENDING",
+          reference: `BANK-${crypto.randomUUID()}`,
+          description: note || `Bank transfer to ${accountName}`,
+          metadata: { method: "bank", bankCode, accountNumber, accountName, provider: "wapipay" },
+        },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   try {
     const payout = await wapipayService.createBankPayout({
@@ -501,7 +526,7 @@ export async function depositPaybill(req: Request, res: Response) {
       amount: new Prisma.Decimal(amount),
       type: "DEPOSIT",
       status: "PENDING",
-      reference: `PAYBILL-DEP-${Date.now()}`,
+      reference: `PAYBILL-DEP-${crypto.randomUUID()}`,
       description: "Paybill deposit",
       metadata: { method: "paybill", paybill, accountReference },
     },

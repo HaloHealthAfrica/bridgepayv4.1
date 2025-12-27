@@ -1,4 +1,4 @@
-import { cleanupExpiredIdempotencyKeys } from "../middleware/idempotency.v2";
+import { cleanupExpiredIdempotencyKeys } from "../middleware/idempotency";
 import { prisma } from "../lib/prisma";
 
 /**

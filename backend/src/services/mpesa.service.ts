@@ -1,4 +1,5 @@
 import axios from "axios";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 
 function normalizeKenyanPhone(phone: string) {
@@ -80,13 +81,15 @@ class MpesaService {
     if (resultCode === 0) {
       const amount = transaction.amount;
       await prisma.$transaction(async (tx) => {
-        await tx.transaction.update({
-          where: { id: transaction.id },
+        // Ensure we only apply credit once (webhooks may be retried)
+        const updated = await tx.transaction.updateMany({
+          where: { id: transaction.id, status: "PENDING" },
           data: {
             status: "SUCCESS",
             metadata: { ...(transaction.metadata as any), callback: body },
           },
         });
+        if (updated.count !== 1) return;
 
         if (transaction.toUserId) {
           await tx.wallet.update({
@@ -105,8 +108,8 @@ class MpesaService {
         }
       });
     } else {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
+      await prisma.transaction.updateMany({
+        where: { id: transaction.id, status: "PENDING" },
         data: { status: "FAILED", metadata: { ...(transaction.metadata as any), callback: body } },
       });
     }
@@ -159,47 +162,155 @@ class MpesaService {
 
   // C2B Confirmation handler (Paybill)
   async handleC2BConfirmation(payload: any) {
-    // Expected Safaricom C2B payload fields (production/sandbox may vary):
+    // Expected Safaricom C2B payload fields:
     // - TransID, TransTime, TransAmount, BusinessShortCode, BillRefNumber, MSISDN, FirstName, MiddleName, LastName
-    const billRef = payload?.BillRefNumber || payload?.billRefNumber || payload?.AccountReference;
-    const amount = Number(payload?.TransAmount || payload?.TransAmount || payload?.amount || 0);
-    if (!billRef || !amount) return;
+    const transId = String(payload?.TransID || payload?.TransId || payload?.transId || payload?.transID || "").trim();
+    const billRef = String(payload?.BillRefNumber || payload?.billRefNumber || payload?.AccountReference || "").trim();
+    const transAmount = Number(payload?.TransAmount || payload?.transAmount || payload?.amount || 0);
 
-    // Our Paybill deposits use accountReference = `BR-${userId}`
-    const userId = String(billRef).startsWith("BR-") ? String(billRef).slice("BR-".length) : null;
+    if (!transId || !billRef || !Number.isFinite(transAmount) || transAmount <= 0) return;
+
+    // Our Paybill account reference is `BR-${userId}`
+    const userId = billRef.startsWith("BR-") ? billRef.slice("BR-".length) : null;
     if (!userId) return;
 
-    // Find latest pending paybill deposit for this user
-    const txRow = await prisma.transaction.findFirst({
+    // Idempotency: if we've already processed this TransID, do nothing.
+    const existing = await prisma.transaction.findFirst({
       where: {
-        toUserId: userId,
-        type: "DEPOSIT",
-        status: "PENDING",
-        metadata: { path: ["method"], equals: "paybill" },
+        OR: [
+          { reference: `C2B-${transId}` },
+          { metadata: { path: ["mpesaC2B", "TransID"], equals: transId } },
+          { metadata: { path: ["mpesaC2B", "transId"], equals: transId } },
+        ],
       },
-      orderBy: { createdAt: "desc" },
+      select: { id: true },
     });
-
-    if (!txRow) return;
+    if (existing) return;
 
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.update({
-        where: { id: txRow.id },
-        data: { status: "SUCCESS", metadata: { ...(txRow.metadata as any), c2b: payload } },
+      // Try to reconcile an existing pending Paybill instruction transaction (best effort)
+      const pending = await tx.transaction.findFirst({
+        where: {
+          toUserId: userId,
+          type: "DEPOSIT",
+          status: "PENDING",
+          metadata: { path: ["method"], equals: "paybill" },
+          amount: new Prisma.Decimal(transAmount),
+        } as any,
+        orderBy: { createdAt: "desc" },
       });
+
+      const creditAmount = new Prisma.Decimal(transAmount);
+
+      if (pending) {
+        const updated = await tx.transaction.updateMany({
+          where: { id: pending.id, status: "PENDING" },
+          data: {
+            status: "SUCCESS",
+            metadata: { ...(pending.metadata as any), mpesaC2B: payload, mpesaC2BTransId: transId },
+          },
+        });
+        if (updated.count !== 1) return;
+      } else {
+        await tx.transaction.create({
+          data: {
+            toUserId: userId,
+            fromUserId: null,
+            amount: creditAmount,
+            fee: new Prisma.Decimal(0),
+            type: "DEPOSIT",
+            status: "SUCCESS",
+            reference: `C2B-${transId}`,
+            description: "Paybill deposit",
+            metadata: { method: "paybill", accountReference: billRef, mpesaC2B: payload },
+          },
+        });
+      }
+
       await tx.wallet.update({
         where: { userId },
-        data: { balance: { increment: txRow.amount } },
+        data: { balance: { increment: creditAmount } },
       });
+
       await tx.notification.create({
         data: {
           userId,
           type: "PAYMENT",
           title: "Paybill Deposit Received",
-          message: `KES ${txRow.amount} added to your wallet`,
+          message: `KES ${transAmount} added to your wallet`,
           actionUrl: "/wallet",
         },
       });
+    });
+  }
+
+  // B2C result handler (withdrawals / send money)
+  async handleB2CResult(payload: any) {
+    const result = payload?.Result || payload?.result || payload;
+    const resultCode = Number(result?.ResultCode ?? result?.resultCode);
+    const originatorConversationID = String(
+      result?.OriginatorConversationID ?? result?.originatorConversationID ?? ""
+    ).trim();
+
+    if (!originatorConversationID) return;
+
+    const txRow = await prisma.transaction.findFirst({
+      where: {
+        status: "PENDING",
+        type: "WITHDRAWAL",
+        metadata: { path: ["originatorConversationID"], equals: originatorConversationID },
+      },
+    });
+    if (!txRow) return;
+
+    const mapped = resultCode === 0 ? "SUCCESS" : "FAILED";
+
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.transaction.updateMany({
+        where: { id: txRow.id, status: "PENDING" },
+        data: { status: mapped, metadata: { ...(txRow.metadata as any), mpesaB2C: payload } },
+      });
+      if (updated.count !== 1) return;
+
+      if (mapped === "FAILED" && txRow.fromUserId) {
+        const refundTotal = txRow.amount.plus(txRow.fee);
+        await tx.wallet.update({
+          where: { userId: txRow.fromUserId },
+          data: { balance: { increment: refundTotal } },
+        });
+        await tx.notification.create({
+          data: {
+            userId: txRow.fromUserId,
+            type: "PAYMENT",
+            title: "Withdrawal Failed",
+            message: `Your M-Pesa payout failed. KES ${Number(refundTotal)} was returned to your wallet.`,
+            actionUrl: "/wallet/history",
+          },
+        });
+      }
+    });
+  }
+
+  // B2C timeout handler (do not auto-refund; provider may still send result later)
+  async handleB2CTimeout(payload: any) {
+    const result = payload?.Result || payload?.result || payload;
+    const originatorConversationID = String(
+      result?.OriginatorConversationID ?? result?.originatorConversationID ?? ""
+    ).trim();
+    if (!originatorConversationID) return;
+
+    const txRow = await prisma.transaction.findFirst({
+      where: {
+        status: "PENDING",
+        type: "WITHDRAWAL",
+        metadata: { path: ["originatorConversationID"], equals: originatorConversationID },
+      },
+    });
+    if (!txRow) return;
+
+    await prisma.transaction.updateMany({
+      where: { id: txRow.id, status: "PENDING" },
+      data: { metadata: { ...(txRow.metadata as any), mpesaB2CTimeout: payload } },
     });
   }
 }

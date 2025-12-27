@@ -79,7 +79,30 @@ callbackRouter.post(
   verifyMpesaSource,
   asyncHandler(async (req, res) => {
     await mpesaService.handleC2BConfirmation(req.body);
-    res.json({ ok: true });
+    // Safaricom expects these keys for C2B confirmation ACK.
+    res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+  })
+);
+
+// M-Pesa B2C Result URL (withdrawals / send money)
+callbackRouter.post(
+  "/mpesa/b2c",
+  webhookRateLimiter,
+  verifyMpesaSource,
+  asyncHandler(async (req, res) => {
+    await mpesaService.handleB2CResult(req.body);
+    res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+  })
+);
+
+// M-Pesa B2C Timeout URL
+callbackRouter.post(
+  "/mpesa/timeout",
+  webhookRateLimiter,
+  verifyMpesaSource,
+  asyncHandler(async (req, res) => {
+    await mpesaService.handleB2CTimeout(req.body);
+    res.json({ ResultCode: 0, ResultDesc: "Accepted" });
   })
 );
 

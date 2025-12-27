@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { uploadFilesToS3 } from "../services/storage.service";
 import lemonadeService from "../services/lemonade.service";
+import crypto from "crypto";
 
 function getCallbackBaseUrl() {
   return process.env.APP_URL || process.env.BACKEND_URL || "http://localhost:3000";
@@ -258,45 +259,48 @@ export async function fundProject(req: Request, res: Response) {
   if (project.ownerId !== req.user!.userId) throw new AppError("Unauthorized", 403);
   if (!project.implementerId) throw new AppError("Assign implementer first", 400);
 
-  const wallet = await prisma.wallet.findUnique({ where: { userId: req.user!.userId } });
-  if (!wallet || Number(wallet.balance) < Number(project.budget)) throw new AppError("Insufficient balance", 400);
+  await prisma.$transaction(
+    async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user!.userId } });
+      if (!wallet || Number(wallet.balance) < Number(project.budget)) throw new AppError("Insufficient balance", 400);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: req.user!.userId },
-      data: {
-        balance: { decrement: project.budget },
-        escrowBalance: { increment: project.budget },
-      },
-    });
+      await tx.wallet.update({
+        where: { userId: req.user!.userId },
+        data: {
+          balance: { decrement: project.budget },
+          escrowBalance: { increment: project.budget },
+        },
+      });
 
-    await tx.project.update({
-      where: { id },
-      data: { status: "ACTIVE", escrowBalance: project.budget, startDate: new Date() },
-    });
+      await tx.project.update({
+        where: { id },
+        data: { status: "ACTIVE", escrowBalance: project.budget, startDate: new Date() },
+      });
 
-    await tx.transaction.create({
-      data: {
-        fromUserId: req.user!.userId,
-        amount: project.budget,
-        type: "ESCROW_LOCK",
-        status: "SUCCESS",
-        reference: `ESC-LOCK-${Date.now()}`,
-        description: `Escrow lock for project: ${project.title}`,
-        metadata: { projectId: id },
-      },
-    });
+      await tx.transaction.create({
+        data: {
+          fromUserId: req.user!.userId,
+          amount: project.budget,
+          type: "ESCROW_LOCK",
+          status: "SUCCESS",
+          reference: `ESC-LOCK-${crypto.randomUUID()}`,
+          description: `Escrow lock for project: ${project.title}`,
+          metadata: { projectId: id },
+        },
+      });
 
-    await tx.notification.create({
-      data: {
-        userId: project.implementerId!,
-        type: "PROJECT",
-        title: "Project Funded",
-        message: `Project "${project.title}" has been funded. Start working!`,
-        actionUrl: `/projects/${id}`,
-      },
-    });
-  });
+      await tx.notification.create({
+        data: {
+          userId: project.implementerId!,
+          type: "PROJECT",
+          title: "Project Funded",
+          message: `Project "${project.title}" has been funded. Start working!`,
+          actionUrl: `/projects/${id}`,
+        },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+  );
 
   res.json({ success: true, message: "Project funded successfully" });
 }
@@ -323,7 +327,7 @@ export async function fundProjectCard(req: Request, res: Response) {
   const payer = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { id: true, name: true, phone: true, email: true } });
   if (!payer) throw new AppError("User not found", 404);
 
-  const reference = `CARD-PROJ-${Date.now()}`;
+  const reference = `CARD-PROJ-${crypto.randomUUID()}`;
   const resultUrl = `${getCallbackBaseUrl()}/api/callback/lemonade`;
 
   const txRow = await prisma.transaction.create({
@@ -509,7 +513,7 @@ export async function approveMilestone(req: Request, res: Response) {
         amount: milestone.amount,
         type: "ESCROW_RELEASE",
         status: "SUCCESS",
-        reference: `ESC-REL-${Date.now()}`,
+        reference: `ESC-REL-${crypto.randomUUID()}`,
         description: `Milestone approved: ${milestone.title}`,
         metadata: { projectId, milestoneId },
       },
