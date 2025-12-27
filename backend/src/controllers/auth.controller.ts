@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -41,6 +42,10 @@ export async function register(req: Request, res: Response) {
 
   if (!email || !phone || !password || !name) throw new AppError("All fields required", 400);
 
+  // Enforce public registration roles (defense-in-depth; validation also restricts this).
+  const publicRoles = new Set<UserRole>(["CUSTOMER", "MERCHANT", "IMPLEMENTER"]);
+  const safeRole: UserRole = role && publicRoles.has(role as UserRole) ? (role as UserRole) : "CUSTOMER";
+
   const existing = await prisma.user.findFirst({
     where: { OR: [{ email }, { phone }] },
     select: { id: true },
@@ -56,7 +61,7 @@ export async function register(req: Request, res: Response) {
         phone,
         password: hashedPassword,
         name,
-        role: role || "CUSTOMER",
+        role: safeRole,
       },
     });
 

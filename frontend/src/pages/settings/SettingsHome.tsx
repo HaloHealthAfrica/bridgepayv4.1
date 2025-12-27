@@ -109,6 +109,42 @@ export function SettingsHome() {
         </div>
       </div>
 
+      {(user.role === "MERCHANT" || user.role === "IMPLEMENTER") ? (
+        <div className="bg-primary-light rounded-card p-5 border border-primary/10 mb-6">
+          <div className="font-extrabold text-primary mb-1">Next steps</div>
+          <div className="text-sm text-text-secondary mb-3">Finish setup to unlock the best experience.</div>
+          <div className="flex flex-wrap gap-3">
+            {user.role === "MERCHANT" ? (
+              <button
+                type="button"
+                className="bg-primary text-white px-5 py-3 rounded-button font-semibold shadow-button"
+                onClick={() => navigate("/merchant")}
+              >
+                Open Merchant Console
+              </button>
+            ) : null}
+            {user.role === "IMPLEMENTER" ? (
+              <button
+                type="button"
+                className="bg-primary text-white px-5 py-3 rounded-button font-semibold shadow-button"
+                onClick={() => navigate("/settings/profile")}
+              >
+                Complete Implementer Profile
+              </button>
+            ) : null}
+            {kycStatus !== "VERIFIED" ? (
+              <button
+                type="button"
+                className="bg-surface border-2 border-primary text-primary px-5 py-3 rounded-button font-semibold"
+                onClick={() => navigate("/settings/kyc")}
+              >
+                Complete KYC
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mb-6">
         <div className="text-lg font-bold mb-3">Account Settings</div>
         <SettingsItem icon={User} title="Personal Information" subtitle="Name, email, phone number" to="/settings/profile" />

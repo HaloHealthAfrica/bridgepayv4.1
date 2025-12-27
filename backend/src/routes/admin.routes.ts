@@ -12,6 +12,7 @@ adminRouter.use(requireAuth);
 adminRouter.get("/stats", requireRole(["ADMIN"]), asyncHandler(adminController.getStats));
 adminRouter.get("/users", requireRole(["ADMIN"]), asyncHandler(adminController.listUsers));
 adminRouter.patch("/users/:id/status", requireRole(["ADMIN"]), asyncHandler(adminController.updateUserStatus));
+adminRouter.patch("/users/:id/role", requireRole(["ADMIN"]), asyncHandler(adminController.updateUserRole));
 
 adminRouter.get("/transactions", requireRole(["ADMIN"]), asyncHandler(adminController.listTransactions));
 adminRouter.get("/wallets", requireRole(["ADMIN"]), asyncHandler(adminController.listWallets));

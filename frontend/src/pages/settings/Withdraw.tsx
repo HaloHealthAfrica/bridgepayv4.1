@@ -54,7 +54,14 @@ export function Withdraw() {
       }
       navigate("/wallet");
     } catch (e: any) {
-      alert(e?.response?.data?.error?.message || "Withdrawal failed");
+      const msg = e?.response?.data?.error?.message || "Withdrawal failed";
+      if (e?.response?.status === 403 && String(msg).toLowerCase().includes("kyc")) {
+        if (confirm("KYC verification is required to withdraw. Go to KYC now?")) {
+          navigate("/settings/kyc");
+          return;
+        }
+      }
+      alert(msg);
     } finally {
       setLoading(false);
     }

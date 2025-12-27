@@ -118,6 +118,25 @@ export async function updateUserStatus(req: Request, res: Response) {
   res.json({ success: true, data: { user: updated } });
 }
 
+export async function updateUserRole(req: Request, res: Response) {
+  const { id } = req.params;
+  const { role } = req.body ?? {};
+  if (!id) throw new AppError("User id required", 400);
+  if (!role) throw new AppError("role required", 400);
+
+  const allowed = ["CUSTOMER", "MERCHANT", "IMPLEMENTER", "PROJECT_VERIFIER", "KYC_VERIFIER", "ADMIN"];
+  const nextRole = String(role);
+  if (!allowed.includes(nextRole)) throw new AppError("Invalid role", 400);
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: { role: nextRole as any },
+    select: { id: true, role: true },
+  });
+
+  res.json({ success: true, data: { user: updated } });
+}
+
 export async function listTransactions(req: Request, res: Response) {
   const { page = 1, limit = 20, q, type, status } = req.query as any;
   const skip = (Number(page) - 1) * Number(limit);

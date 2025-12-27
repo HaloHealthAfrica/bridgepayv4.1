@@ -69,7 +69,9 @@ export const authSchemas = {
     phone: kenyanPhoneSchema,
     password: passwordSchema,
     name: z.string().min(1, "Name is required").max(100, "Name too long"),
-    role: z.enum(["CUSTOMER", "MERCHANT", "IMPLEMENTER", "PROJECT_VERIFIER", "KYC_VERIFIER", "ADMIN"]),
+    // Public registration is restricted to non-privileged roles.
+    // Privileged roles (ADMIN/KYC_VERIFIER/PROJECT_VERIFIER) must be assigned by an admin.
+    role: z.enum(["CUSTOMER", "MERCHANT", "IMPLEMENTER"]).optional(),
   }),
   login: z.object({
     email: emailSchema,

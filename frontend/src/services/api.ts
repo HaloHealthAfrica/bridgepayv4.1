@@ -100,6 +100,7 @@ export const adminAPI = {
   users: (params: { page?: number; limit?: number; q?: string; role?: string; status?: string; kycStatus?: string } = {}) =>
     http.get("/admin/users", { params }),
   updateUserStatus: (id: string, status: string) => http.patch(`/admin/users/${id}/status`, { status }),
+  updateUserRole: (id: string, role: string) => http.patch(`/admin/users/${id}/role`, { role }),
   transactions: (params: { page?: number; limit?: number; q?: string; type?: string; status?: string } = {}) =>
     http.get("/admin/transactions", { params }),
   wallets: (params: { page?: number; limit?: number; q?: string } = {}) => http.get("/admin/wallets", { params }),
